@@ -58,7 +58,11 @@ If you live in California, you can connect to the **Grid Coordination Energy Pri
 
 See the [Price Server User Guide](https://github.com/grid-coordination/price-server-user-guide) for full details on available programs, data format, MQTT support, and example API usage.
 
+## Limitations
+
+- **No authentication support yet** — currently only VTNs that allow anonymous/unauthenticated access are supported. OAuth2 and token-based authentication are planned for a future release.
+
 ## Requirements
 
 - Home Assistant 2024.12.0 or later
-- Network access to an OpenADR 3 VTN
+- Network access to an OpenADR 3 VTN (anonymous access)
