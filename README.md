@@ -54,7 +54,7 @@ If you live in California, you can connect to the **Grid Coordination Energy Pri
 
 - **VTN URL:** `https://price.grid-coordination.energy/openadr3/3.1.0`
 - **Coverage:** PG&E and SCE service territories (492 pricing programs by circuit/substation) plus 11 MOER GHG emissions programs
-- **Data sources:** CAISO Day-Ahead Market pricing via GridX, SGIP Signal marginal emissions via WattTime
+- **Data sources:** CAISO Day-Ahead Market pricing via GridX, marginal emissions from [SGIP Signal](https://sgipsignal.com)
 
 See the [Price Server User Guide](https://github.com/grid-coordination/price-server-user-guide) for full details on available programs, data format, MQTT support, and example API usage.
 
