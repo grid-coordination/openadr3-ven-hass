@@ -8,7 +8,7 @@
           "ven_name": "VEN name"
         },
         "data_description": {
-          "vtn_url": "The base URL of the OpenADR 3 VTN (e.g. https://price.grid-coordination.energy/openadr3/3.1.0)",
+          "vtn_url": "The base URL of the OpenADR 3 VTN",
           "ven_name": "Name to register this VEN as with the VTN"
         }
       },
