@@ -14,6 +14,15 @@ A Home Assistant custom integration that acts as an [OpenADR 3](https://www.open
 
 ### HACS (recommended)
 
+> [!NOTE]
+> **Early access — not yet in the HACS default repository.**
+> Until this integration is listed in HACS, add it as a custom repository first:
+> 1. In HACS, go to **Integrations** → three-dot menu (⋮) → **Custom repositories**
+> 2. Enter `https://github.com/grid-coordination/openadr3-ven-hass` and select category **Integration**
+> 3. Click **Add**
+>
+> After that, proceed with the standard install below.
+
 1. Open HACS in your Home Assistant instance
 2. Go to **Integrations** → search for **OpenADR 3 VEN**
 3. Click **Install**
