@@ -1,5 +1,10 @@
 # OpenADR 3 VEN for Home Assistant
 
+[![HACS Validation](https://github.com/grid-coordination/openadr3-ven-hass/actions/workflows/hacs.yml/badge.svg)](https://github.com/grid-coordination/openadr3-ven-hass/actions/workflows/hacs.yml)
+[![Hassfest Validation](https://github.com/grid-coordination/openadr3-ven-hass/actions/workflows/hassfest.yml/badge.svg)](https://github.com/grid-coordination/openadr3-ven-hass/actions/workflows/hassfest.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/grid-coordination/openadr3-ven-hass)](https://github.com/grid-coordination/openadr3-ven-hass/releases)
+[![License](https://img.shields.io/github/license/grid-coordination/openadr3-ven-hass)](LICENSE)
+
 A Home Assistant custom integration that acts as an [OpenADR 3](https://www.openadr.org/) Virtual End Node (VEN). It connects to an OpenADR 3 VTN, subscribes to programs (energy pricing, GHG emissions), and surfaces real-time data as Home Assistant sensors.
 
 ## Features
