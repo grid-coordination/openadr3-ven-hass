@@ -47,7 +47,8 @@ def _process_event(event: Event) -> list[dict[str, Any]]:
         if not interval.payloads:
             continue
         payload = interval.payloads[0]
-        value = payload.values[0] if payload.values else None
+        raw_value = payload.values[0] if payload.values else None
+        value = float(raw_value) if raw_value is not None else None
         schedule.append({
             "hour": interval.id,
             "value": value,
