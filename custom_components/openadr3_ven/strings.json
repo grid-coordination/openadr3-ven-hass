@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to OpenADR 3 VTN",
+        "data": {
+          "vtn_url": "VTN URL",
+          "ven_name": "VEN name"
+        },
+        "data_description": {
+          "vtn_url": "The base URL of the OpenADR 3 VTN (e.g. https://price.grid-coordination.energy/openadr3/3.1.0)",
+          "ven_name": "Name to register this VEN as with the VTN"
+        }
+      },
+      "select_programs": {
+        "title": "Select Programs",
+        "data": {
+          "programs": "Programs"
+        },
+        "data_description": {
+          "programs": "Select the programs you want to subscribe to"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_service%]"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "domain": "openadr3_ven",
+  "name": "OpenADR 3 VEN",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/grid-coordination/openadr3-ven-hass",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": ["openadr3>=0.3.0"],
+  "version": "0.1.0"
+}
