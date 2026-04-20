@@ -243,21 +243,35 @@ def _pick_current_event(events: list[Event]) -> Event | None:
     """Pick the event most relevant to the current time.
 
     Events are named like RATE-CIRCUIT-YYYY-MM-DD. We pick the one
-    whose date matches today, or the most recently created one.
+    whose date matches today. If no today event exists, pick the
+    nearest event that contains the current hour's data.
     """
     if not events:
         return None
 
-    today_str = dt_util.now().strftime("%Y-%m-%d")
+    now = dt_util.now()
+    today_str = now.strftime("%Y-%m-%d")
+    current_hour = now.hour
 
     # Try to find today's event by name suffix
     for event in events:
         if event.event_name and event.event_name.endswith(today_str):
             return event
 
-    # Fallback: return the most recently created event
-    events_with_created = [e for e in events if e.created is not None]
-    if events_with_created:
-        return max(events_with_created, key=lambda e: e.created)
+    # Fallback: pick the nearest event that has the current hour
+    # Sort by event name (date suffix) to get chronological order
+    dated_events = sorted(
+        [e for e in events if e.event_name],
+        key=lambda e: e.event_name,
+    )
+    for event in dated_events:
+        if event.intervals:
+            hours = {iv.id for iv in event.intervals}
+            if current_hour in hours:
+                return event
+
+    # Last resort: return the earliest event
+    if dated_events:
+        return dated_events[0]
 
     return events[0]

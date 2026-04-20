@@ -8,6 +8,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
+from homeassistant.util import dt as dt_util
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
@@ -85,13 +86,20 @@ class OpenADR3ProgramSensor(CoordinatorEntity[OpenADR3Coordinator], SensorEntity
             return None
         return self.coordinator.data.get(self._program_id)
 
-    @property
-    def native_value(self) -> float | None:
-        """Return the current hour's value."""
+    def _value_for_hour(self, hour: int) -> float | None:
+        """Look up a value by hour from the schedule."""
         data = self._program_data
         if data is None:
             return None
-        return data.current_value
+        for entry in data.schedule:
+            if entry["hour"] == hour:
+                return entry["value"]
+        return None
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current hour's value, computed live from the schedule."""
+        return self._value_for_hour(dt_util.now().hour)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -102,7 +110,7 @@ class OpenADR3ProgramSensor(CoordinatorEntity[OpenADR3Coordinator], SensorEntity
         return {
             "event_name": data.event_name,
             "payload_type": data.payload_type,
-            "next_hour_value": data.next_hour_value,
+            "next_hour_value": self._value_for_hour((dt_util.now().hour + 1) % 24),
             "daily_min": data.daily_min,
             "daily_max": data.daily_max,
             "daily_avg": data.daily_avg,
