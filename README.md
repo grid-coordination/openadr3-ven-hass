@@ -52,11 +52,17 @@ Each subscribed program creates a sensor with:
 | Property | Description |
 |----------|-------------|
 | State | Current hour's value (price or emissions) |
-| `event_name` | Name of the current event |
+| `event_names` | List of event names contributing to the forecast |
 | `next_hour_value` | Next hour's value |
 | `daily_min` / `daily_max` / `daily_avg` | Daily statistics |
-| `schedule` | Full hourly schedule as a list |
+| `schedule` | Today's hourly schedule |
+| `forecast` | Multi-day hourly forecast (typically 72 hours) with `datetime`, `date`, `hour`, `value` |
+| `forecast_hours` | Number of forecast hours available |
 | `payload_type` | `PRICE` or `GHG` |
+
+### Visualizing the Forecast
+
+The 72-hour forecast can be displayed as a chart using [ApexCharts Card](https://github.com/RomRider/apexcharts-card). See the [Dashboard Setup Guide](docs/dashboard.md) for installation and configuration.
 
 ## Compatible VTNs
 
