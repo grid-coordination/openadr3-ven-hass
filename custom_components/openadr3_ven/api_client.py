@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,6 +15,9 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_PAGE_SIZE = 50
 
+_MANIFEST = json.loads((Path(__file__).parent / "manifest.json").read_text())
+USER_AGENT = f"{_MANIFEST['domain']}/{_MANIFEST['version']}"
+
 
 class VtnApiClient:
     """Async client for an OpenADR 3 VTN."""
@@ -22,7 +27,10 @@ class VtnApiClient:
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=timeout,
-            headers={"Accept": "application/json"},
+            headers={
+                "Accept": "application/json",
+                "User-Agent": USER_AGENT,
+            },
         )
 
     async def test_connection(self) -> bool:
