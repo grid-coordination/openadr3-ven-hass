@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.util import dt as dt_util
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_PROGRAMS, CONF_VTN_NAME, DOMAIN
 from .coordinator import OpenADR3Coordinator, ProgramData
@@ -86,11 +87,15 @@ class OpenADR3ProgramSensor(CoordinatorEntity[OpenADR3Coordinator], SensorEntity
             return None
         return self.coordinator.data.get(self._program_id)
 
-    def _value_for_hour(self, hour: int) -> float | None:
-        """Look up a value by hour from the schedule."""
+    def _value_for_datetime(self, date_str: str, hour: int) -> float | None:
+        """Look up a value by date and hour from the forecast."""
         data = self._program_data
         if data is None:
             return None
+        for entry in data.forecast:
+            if entry.get("date") == date_str and entry["hour"] == hour:
+                return entry["value"]
+        # Fallback: search schedule (for when forecast has no date info)
         for entry in data.schedule:
             if entry["hour"] == hour:
                 return entry["value"]
@@ -98,21 +103,32 @@ class OpenADR3ProgramSensor(CoordinatorEntity[OpenADR3Coordinator], SensorEntity
 
     @property
     def native_value(self) -> float | None:
-        """Return the current hour's value, computed live from the schedule."""
-        return self._value_for_hour(dt_util.now().hour)
+        """Return the current hour's value, computed live from the forecast."""
+        now = dt_util.now()
+        return self._value_for_datetime(now.strftime("%Y-%m-%d"), now.hour)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the full schedule and stats as attributes."""
+        """Return the schedule, forecast, and stats as attributes."""
         data = self._program_data
         if data is None:
             return {}
+
+        now = dt_util.now()
+        today_str = now.strftime("%Y-%m-%d")
+        next_hour = (now.hour + 1) % 24
+        next_hour_date = today_str if next_hour > 0 else (
+            (now + timedelta(hours=1)).strftime("%Y-%m-%d")
+        )
+
         return {
-            "event_name": data.event_name,
+            "event_names": data.event_names,
             "payload_type": data.payload_type,
-            "next_hour_value": self._value_for_hour((dt_util.now().hour + 1) % 24),
+            "next_hour_value": self._value_for_datetime(next_hour_date, next_hour),
             "daily_min": data.daily_min,
             "daily_max": data.daily_max,
             "daily_avg": data.daily_avg,
             "schedule": data.schedule,
+            "forecast": data.forecast,
+            "forecast_hours": len(data.forecast),
         }

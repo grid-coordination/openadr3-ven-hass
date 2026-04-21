@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 import logging
@@ -20,6 +21,9 @@ from .mqtt_client import MqttSubscriptionManager, pick_broker_uri
 
 _LOGGER = logging.getLogger(__name__)
 
+# Pattern to extract date from event names like EELEC-012041131-2026-04-21
+_DATE_SUFFIX_RE = re.compile(r"(\d{4}-\d{2}-\d{2})$")
+
 
 @dataclass
 class ProgramData:
@@ -28,19 +32,32 @@ class ProgramData:
     program_id: str
     program_name: str
     payload_type: str
-    event_name: str | None = None
-    current_value: float | None = None
-    next_hour_value: float | None = None
+    # Today's schedule (24 hourly entries for the current day's event)
+    schedule: list[dict[str, Any]] = field(default_factory=list)
+    # Multi-day forecast (all available hourly entries with ISO datetime keys)
+    forecast: list[dict[str, Any]] = field(default_factory=list)
+    # Per-day event names
+    event_names: list[str] = field(default_factory=list)
+    # Today's stats
     daily_min: float | None = None
     daily_max: float | None = None
     daily_avg: float | None = None
-    schedule: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _extract_date(event_name: str | None) -> str | None:
+    """Extract YYYY-MM-DD from an event name suffix."""
+    if not event_name:
+        return None
+    m = _DATE_SUFFIX_RE.search(event_name)
+    return m.group(1) if m else None
 
 
 def _process_event(event: Event) -> list[dict[str, Any]]:
     """Extract hourly schedule from an event's intervals."""
     if not event.intervals:
         return []
+
+    date_str = _extract_date(event.event_name)
 
     schedule = []
     for interval in event.intervals:
@@ -49,31 +66,17 @@ def _process_event(event: Event) -> list[dict[str, Any]]:
         payload = interval.payloads[0]
         raw_value = payload.values[0] if payload.values else None
         value = float(raw_value) if raw_value is not None else None
-        schedule.append({
+        entry: dict[str, Any] = {
             "hour": interval.id,
             "value": value,
             "payload_type": payload.type,
-        })
+        }
+        if date_str:
+            entry["date"] = date_str
+            entry["datetime"] = f"{date_str}T{interval.id:02d}:00:00"
+        schedule.append(entry)
 
-    return sorted(schedule, key=lambda s: s["hour"])
-
-
-def _find_current_hour_value(
-    schedule: list[dict[str, Any]],
-) -> tuple[float | None, float | None]:
-    """Find the current and next hour values from the schedule."""
-    now = dt_util.now()
-    current_hour = now.hour
-    current_value = None
-    next_hour_value = None
-
-    for entry in schedule:
-        if entry["hour"] == current_hour:
-            current_value = entry["value"]
-        elif entry["hour"] == (current_hour + 1) % 24:
-            next_hour_value = entry["value"]
-
-    return current_value, next_hour_value
+    return sorted(schedule, key=lambda s: (s.get("date", ""), s["hour"]))
 
 
 def _compute_daily_stats(
@@ -84,6 +87,63 @@ def _compute_daily_stats(
     if not values:
         return None, None, None
     return min(values), max(values), sum(values) / len(values)
+
+
+def _build_program_data(
+    program_id: str,
+    program_name: str,
+    payload_type: str,
+    events: list[Event],
+) -> ProgramData:
+    """Process all events for a program into a ProgramData."""
+    today_str = dt_util.now().strftime("%Y-%m-%d")
+
+    # Sort events chronologically by date in event name
+    dated_events = sorted(
+        [e for e in events if e.event_name],
+        key=lambda e: e.event_name,
+    )
+
+    # Build combined forecast from all events
+    forecast: list[dict[str, Any]] = []
+    today_schedule: list[dict[str, Any]] = []
+    event_names: list[str] = []
+
+    for event in dated_events:
+        intervals = _process_event(event)
+        forecast.extend(intervals)
+        event_names.append(event.event_name or "")
+
+        event_date = _extract_date(event.event_name)
+        if event_date == today_str:
+            today_schedule = intervals
+
+    # If no today event, use the nearest event that has the current hour
+    if not today_schedule and dated_events:
+        current_hour = dt_util.now().hour
+        for event in dated_events:
+            if event.intervals:
+                hours = {iv.id for iv in event.intervals}
+                if current_hour in hours:
+                    today_schedule = _process_event(event)
+                    break
+        # Last resort: use the earliest event
+        if not today_schedule:
+            today_schedule = _process_event(dated_events[0])
+
+    daily_min, daily_max, daily_avg = _compute_daily_stats(today_schedule)
+
+    return ProgramData(
+        program_id=program_id,
+        program_name=program_name,
+        payload_type=payload_type,
+        schedule=today_schedule,
+        forecast=forecast,
+        event_names=event_names,
+        daily_min=daily_min,
+        daily_max=daily_max,
+        daily_avg=daily_avg,
+    )
 
 
 class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
@@ -150,27 +210,50 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
             self._mqtt = None
 
     def _handle_mqtt_event(self, event: Event) -> None:
-        """Handle an event received via MQTT (called from MQTT thread)."""
+        """Handle an event received via MQTT (called from MQTT thread).
+
+        Merges the updated event into the existing forecast data.
+        """
         program_id = event.program_id
         if self.data is None or program_id not in self.data:
             return
 
         existing = self.data[program_id]
-        schedule = _process_event(event)
-        current_value, next_hour_value = _find_current_hour_value(schedule)
-        daily_min, daily_max, daily_avg = _compute_daily_stats(schedule)
+        updated_intervals = _process_event(event)
+        event_date = _extract_date(event.event_name)
+
+        # Replace intervals for this event's date in the forecast
+        forecast = [
+            e for e in existing.forecast
+            if e.get("date") != event_date
+        ]
+        forecast.extend(updated_intervals)
+        forecast.sort(key=lambda e: (e.get("date", ""), e["hour"]))
+
+        # Update event names list
+        event_names = list(existing.event_names)
+        if event.event_name and event.event_name not in event_names:
+            event_names.append(event.event_name)
+            event_names.sort()
+
+        # Recompute today's schedule
+        today_str = dt_util.now().strftime("%Y-%m-%d")
+        today_schedule = [e for e in forecast if e.get("date") == today_str]
+        if not today_schedule:
+            today_schedule = existing.schedule
+
+        daily_min, daily_max, daily_avg = _compute_daily_stats(today_schedule)
 
         updated_program = ProgramData(
             program_id=program_id,
             program_name=existing.program_name,
             payload_type=existing.payload_type,
-            event_name=event.event_name,
-            current_value=current_value,
-            next_hour_value=next_hour_value,
+            schedule=today_schedule,
+            forecast=forecast,
+            event_names=event_names,
             daily_min=daily_min,
             daily_max=daily_max,
             daily_avg=daily_avg,
-            schedule=schedule,
         )
 
         new_data = {**self.data, program_id: updated_program}
@@ -194,7 +277,6 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
                     program_name,
                     err,
                 )
-                # Keep previous data if available
                 if self.data and program_id in self.data:
                     data[program_id] = self.data[program_id]
                 else:
@@ -205,73 +287,11 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
                     )
                 continue
 
-            # Find the most recent event (today's event)
-            best_event = _pick_current_event(events)
-
-            if best_event is None:
-                data[program_id] = ProgramData(
-                    program_id=program_id,
-                    program_name=program_name,
-                    payload_type=payload_type,
-                )
-                continue
-
-            schedule = _process_event(best_event)
-            current_value, next_hour_value = _find_current_hour_value(schedule)
-            daily_min, daily_max, daily_avg = _compute_daily_stats(schedule)
-
-            data[program_id] = ProgramData(
-                program_id=program_id,
-                program_name=program_name,
-                payload_type=payload_type,
-                event_name=best_event.event_name,
-                current_value=current_value,
-                next_hour_value=next_hour_value,
-                daily_min=daily_min,
-                daily_max=daily_max,
-                daily_avg=daily_avg,
-                schedule=schedule,
+            data[program_id] = _build_program_data(
+                program_id, program_name, payload_type, events
             )
 
         if not data:
             raise UpdateFailed("No program data could be fetched")
 
         return data
-
-
-def _pick_current_event(events: list[Event]) -> Event | None:
-    """Pick the event most relevant to the current time.
-
-    Events are named like RATE-CIRCUIT-YYYY-MM-DD. We pick the one
-    whose date matches today. If no today event exists, pick the
-    nearest event that contains the current hour's data.
-    """
-    if not events:
-        return None
-
-    now = dt_util.now()
-    today_str = now.strftime("%Y-%m-%d")
-    current_hour = now.hour
-
-    # Try to find today's event by name suffix
-    for event in events:
-        if event.event_name and event.event_name.endswith(today_str):
-            return event
-
-    # Fallback: pick the nearest event that has the current hour
-    # Sort by event name (date suffix) to get chronological order
-    dated_events = sorted(
-        [e for e in events if e.event_name],
-        key=lambda e: e.event_name,
-    )
-    for event in dated_events:
-        if event.intervals:
-            hours = {iv.id for iv in event.intervals}
-            if current_hour in hours:
-                return event
-
-    # Last resort: return the earliest event
-    if dated_events:
-        return dated_events[0]
-
-    return events[0]
