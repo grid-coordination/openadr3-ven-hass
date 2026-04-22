@@ -45,8 +45,7 @@ Install **ApexCharts Card** via HACS:
       color: "#1976D2"
       opacity: 0.3
   yaxis:
-    - min: ~0
-      apex_config:
+    - apex_config:
         title:
           text: "$/kWh"
   apex_config:
@@ -87,8 +86,7 @@ Install **ApexCharts Card** via HACS:
       color: "#2E7D32"
       opacity: 0.3
   yaxis:
-    - min: ~0
-      apex_config:
+    - apex_config:
         title:
           text: "g CO₂/kWh"
   apex_config:
