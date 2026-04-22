@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from openadr3 import Event, Program
@@ -22,8 +24,14 @@ USER_AGENT = f"{_MANIFEST['domain']}/{_MANIFEST['version']}"
 class VtnApiClient:
     """Async client for an OpenADR 3 VTN."""
 
-    def __init__(self, base_url: str, timeout: float = DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        time_zone: str = "UTC",
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._tz = ZoneInfo(time_zone)
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=timeout,
@@ -64,9 +72,37 @@ class VtnApiClient:
     async def get_events(
         self, program_id: str, skip: int = 0, limit: int = DEFAULT_PAGE_SIZE
     ) -> list[Event]:
-        """Fetch events for a program."""
+        """Fetch events for a program.
+
+        Computes a date window from the start of yesterday to the end of
+        today+3 in the HA local timezone, then converts to UTC for the
+        VTN query.  This ensures "today's" event is always captured
+        regardless of UTC offset.
+        """
+        now_local = datetime.now(self._tz)
+        # Start of yesterday in local tz → UTC
+        local_start = now_local.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) - timedelta(days=1)
+        # End of today+3 (start of today+4) in local tz → UTC
+        local_end = now_local.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) + timedelta(days=4)
+        date_start = local_start.astimezone(ZoneInfo("UTC")).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        date_end = local_end.astimezone(ZoneInfo("UTC")).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
         resp = await self._client.get(
-            "/events", params={"programID": program_id, "skip": skip, "limit": limit}
+            "/events",
+            params={
+                "programID": program_id,
+                "dateStart": date_start,
+                "dateEnd": date_end,
+                "skip": skip,
+                "limit": limit,
+            },
         )
         resp.raise_for_status()
         return [Event.from_raw(e) for e in resp.json()]

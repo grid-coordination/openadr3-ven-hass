@@ -15,7 +15,7 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up OpenADR 3 VEN from a config entry."""
-    client = VtnApiClient(entry.data[CONF_VTN_URL])
+    client = VtnApiClient(entry.data[CONF_VTN_URL], time_zone=hass.config.time_zone)
     coordinator = OpenADR3Coordinator(hass, entry, client)
 
     await coordinator.async_config_entry_first_refresh()
