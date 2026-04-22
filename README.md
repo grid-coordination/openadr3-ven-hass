@@ -60,9 +60,9 @@ Each subscribed program creates a sensor with:
 | `forecast_hours` | Number of forecast hours available |
 | `payload_type` | `PRICE` or `GHG` |
 
-### Visualizing the Forecast
+### Dashboard
 
-The 72-hour forecast can be displayed as a chart using [ApexCharts Card](https://github.com/RomRider/apexcharts-card). See the [Dashboard Setup Guide](docs/dashboard.md) for installation and configuration.
+Current values can be displayed with [Mushroom Cards](https://github.com/piitaya/lovelace-mushroom) and the 72-hour forecast as charts using [ApexCharts Card](https://github.com/RomRider/apexcharts-card). See the [Dashboard Setup Guide](docs/dashboard.md) for full configuration.
 
 ## Compatible VTNs
 
