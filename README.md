@@ -87,6 +87,10 @@ See the [Price Server User Guide](https://github.com/grid-coordination/price-ser
 - Home Assistant 2024.12.0 or later
 - Network access to an OpenADR 3 VTN (anonymous access)
 
+## Community
+
+- [**Announcement on the Home Assistant Community Forum**](https://community.home-assistant.io/t/announcing-openadr-3-ven-for-home-assistant/1005701)
+
 ## Contributing
 
 - **Questions and ideas** — please start a [Discussion](https://github.com/grid-coordination/openadr3-ven-hass/discussions)
