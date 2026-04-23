@@ -1,0 +1,59 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "custom_components/openadr3_ven/manifest.json"
+
+jobs:
+  release:
+    name: Create release if version bumped
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check version change
+        id: version
+        run: |
+          NEW=$(jq -r .version custom_components/openadr3_ven/manifest.json)
+          OLD=$(git show HEAD~1:custom_components/openadr3_ven/manifest.json 2>/dev/null | jq -r .version 2>/dev/null || echo "")
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "old=$OLD" >> "$GITHUB_OUTPUT"
+          if [ "$NEW" != "$OLD" ] && [ -n "$NEW" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="v${{ steps.version.outputs.new }}"
+          # Collect commits since the previous version tag
+          PREV_TAG="v${{ steps.version.outputs.old }}"
+          if git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+            CHANGES=$(git log "$PREV_TAG"..HEAD --oneline --no-decorate)
+          else
+            CHANGES=$(git log --oneline -10 --no-decorate)
+          fi
+          BODY=$(cat <<EOF
+          ## Changes
+
+          $CHANGES
+
+          ## Upgrading
+
+          HACS users: update notification will appear automatically. After updating, restart Home Assistant.
+          EOF
+          )
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --notes "$BODY" \
+            --target "${{ github.sha }}"
