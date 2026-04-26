@@ -96,3 +96,7 @@ See the [Price Server User Guide](https://github.com/grid-coordination/price-ser
 - **Questions and ideas** — please start a [Discussion](https://github.com/grid-coordination/openadr3-ven-hass/discussions)
 - **Bug reports** — file an [Issue](https://github.com/grid-coordination/openadr3-ven-hass/issues) with steps to reproduce
 - **Pull requests** — should reference an existing Issue that describes the motivation and expected behavior
+
+## Trademarks
+
+OpenADR® and the OpenADR logo are trademarks of the OpenADR Alliance. This is a community-developed integration and is not affiliated with, endorsed by, or certified by the OpenADR Alliance.
