@@ -55,10 +55,31 @@ Each subscribed program creates a sensor with:
 | `event_names` | List of event names contributing to the forecast |
 | `next_hour_value` | Next hour's value |
 | `daily_min` / `daily_max` / `daily_avg` | Daily statistics |
-| `schedule` | Today's hourly schedule |
-| `forecast` | Multi-day hourly forecast (typically 72 hours) with `datetime`, `date`, `hour`, `value` |
+| `schedule` | Today's 24 hourly entries, one per local hour |
+| `forecast` | Multi-day hourly forecast (typically 72 hours), one entry per local hour |
 | `forecast_hours` | Number of forecast hours available |
 | `payload_type` | `PRICE` or `GHG` |
+
+Each `schedule` / `forecast` entry is shaped:
+
+```json
+{
+  "date": "2026-05-23",
+  "datetime": "2026-05-23T01:00:00-07:00",
+  "hour": 1,
+  "value": 0.26301,
+  "payload_type": "PRICE"
+}
+```
+
+### Time and timezone
+
+The integration positions each VTN interval in time using its `intervalPeriod.start` + `duration` (per the OpenADR 3 spec), then expands it into one entry per hour it covers in Home Assistant's local timezone. This handles both common event shapes uniformly:
+
+- **24 × PT1H** intervals (e.g. CAISO-derived day-ahead pricing) — one row per hour, `interval.id == hour`.
+- **TOU-period** intervals with a handful of variable-duration entries (e.g. 3 intervals × `PT16H` / `PT5H` / `PT3H` covering 24 hours, as used by most utility TOU rate schedules) — expanded into 24 hourly rows with the same price repeated across the hours each interval covers.
+
+The `datetime` field on every row is a full ISO 8601 timestamp with timezone offset (e.g. `2026-05-23T01:00:00-07:00`), expressing the row's start-of-hour in HA local time. Downstream consumers can read `datetime` directly without needing to infer the tariff's local timezone.
 
 ### Dashboard
 
