@@ -42,11 +42,13 @@ class MqttSubscriptionManager:
         broker_uri: str,
         topics: list[str],
         on_event: Callable[[Event, str], None],
+        on_connected: Callable[[], None] | None = None,
         client_id: str = "hass-openadr3-ven",
     ) -> None:
         self._host, self._port, self._use_tls = parse_broker_uri(broker_uri)
         self._on_event = on_event
-        self._topics = topics
+        self._on_connected = on_connected
+        self._topics = list(topics)
 
         self._client = mqtt.Client(
             client_id=client_id,
@@ -79,6 +81,22 @@ class MqttSubscriptionManager:
     def is_connected(self) -> bool:
         return self._connected
 
+    def update_topics(self, new_topics: list[str]) -> None:
+        """Replace the subscribed topic set, applying the diff via (un)subscribe.
+
+        Safe to call from any thread once the client loop is running; paho's
+        subscribe/unsubscribe are thread-safe.
+        """
+        old = set(self._topics)
+        new = set(new_topics)
+        for topic in old - new:
+            self._client.unsubscribe(topic)
+            _LOGGER.debug("Unsubscribed from %s", topic)
+        for topic in new - old:
+            self._client.subscribe(topic)
+            _LOGGER.debug("Subscribed to %s", topic)
+        self._topics = list(new_topics)
+
     def _on_connect(
         self,
         client: mqtt.Client,
@@ -96,6 +114,11 @@ class MqttSubscriptionManager:
                 client.subscribe(topic)
                 _LOGGER.debug("Subscribed to %s", topic)
             self._connected = True
+            if self._on_connected is not None:
+                try:
+                    self._on_connected()
+                except Exception:
+                    _LOGGER.exception("on_connected callback failed")
         else:
             _LOGGER.error("MQTT connection failed: %s", rc)
 

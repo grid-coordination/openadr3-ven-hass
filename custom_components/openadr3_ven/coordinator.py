@@ -180,6 +180,7 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
         )
         self.client = client
         self._mqtt: MqttSubscriptionManager | None = None
+        self._mqtt_connect_count = 0
 
     async def async_start_mqtt(self) -> None:
         """Detect MQTT support and start subscription if available."""
@@ -209,6 +210,7 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
             broker_uri=broker_uri,
             topics=topics,
             on_event=self._handle_mqtt_event,
+            on_connected=self._on_mqtt_connected,
             client_id=f"hass-oa3v-{entry_id_short}",
         )
         await self.hass.async_add_executor_job(self._mqtt.start)
@@ -216,6 +218,40 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
             "MQTT subscription started: %d topic(s) for %d program(s)",
             len(topics), len(program_ids),
         )
+
+    def _on_mqtt_connected(self) -> None:
+        """Fired from the MQTT thread on every (re)connect.
+
+        First call (initial connect) is a no-op: async_start_mqtt fetched topics
+        and async_config_entry_first_refresh just snapshotted state, so there is
+        nothing to redo. Subsequent calls are reconnects — schedule a re-fetch
+        of topics and a fresh REST snapshot on the HA loop.
+        """
+        self._mqtt_connect_count += 1
+        if self._mqtt_connect_count == 1:
+            return
+        self.hass.loop.call_soon_threadsafe(
+            lambda: self.hass.async_create_task(self._async_refresh_on_reconnect())
+        )
+
+    async def _async_refresh_on_reconnect(self) -> None:
+        """Re-fetch topic list and trigger a fresh REST snapshot."""
+        _LOGGER.info(
+            "MQTT reconnected (count=%d); re-fetching topics and re-snapshotting",
+            self._mqtt_connect_count,
+        )
+        programs_config = self.config_entry.data[CONF_PROGRAMS]
+        program_ids = {p["id"] for p in programs_config}
+        try:
+            fresh_topics = await self.client.get_all_program_event_topics(program_ids)
+        except Exception:
+            _LOGGER.exception("Failed to re-fetch MQTT topics after reconnect")
+        else:
+            if self._mqtt is not None and fresh_topics:
+                await self.hass.async_add_executor_job(
+                    self._mqtt.update_topics, fresh_topics
+                )
+        await self.async_request_refresh()
 
     async def async_stop_mqtt(self) -> None:
         """Stop MQTT subscription if running."""
