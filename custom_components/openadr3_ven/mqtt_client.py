@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import paho.mqtt.client as mqtt
 
-from openadr3 import Event
+from openadr3 import Event, coerce_notification
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class MqttSubscriptionManager:
         self,
         broker_uri: str,
         topics: list[str],
-        on_event: Callable[[Event], None],
+        on_event: Callable[[Event, str], None],
         client_id: str = "hass-openadr3-ven",
     ) -> None:
         self._host, self._port, self._use_tls = parse_broker_uri(broker_uri)
@@ -124,11 +124,23 @@ class MqttSubscriptionManager:
             return
 
         try:
-            event = Event.from_raw(raw)
+            notif = coerce_notification(raw)
+        except Exception:
+            _LOGGER.exception("Failed to parse MQTT notification on %s", msg.topic)
+            return
+
+        if notif.object_type != "EVENT" or not isinstance(notif.object, Event):
             _LOGGER.debug(
-                "MQTT event update for program %s: %s",
-                event.program_id, event.event_name,
+                "Ignoring non-EVENT notification (object_type=%s) on %s",
+                notif.object_type, msg.topic,
             )
-            self._on_event(event)
+            return
+
+        try:
+            _LOGGER.debug(
+                "MQTT %s for program %s: %s",
+                notif.operation, notif.object.program_id, notif.object.event_name,
+            )
+            self._on_event(notif.object, notif.operation)
         except Exception:
             _LOGGER.exception("Failed to process MQTT event on %s", msg.topic)

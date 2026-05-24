@@ -223,37 +223,42 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
             await self.hass.async_add_executor_job(self._mqtt.stop)
             self._mqtt = None
 
-    def _handle_mqtt_event(self, event: Event) -> None:
+    def _handle_mqtt_event(self, event: Event, operation: str) -> None:
         """Handle an event received via MQTT (called from MQTT thread).
 
-        Merges the updated event into the existing forecast data.
+        Branches on the notification's operation:
+          CREATE/UPDATE/READ → merge intervals for the event's date into the forecast.
+          DELETE             → purge intervals for the event's date and drop its name.
         """
         program_id = event.program_id
         if self.data is None or program_id not in self.data:
             return
 
         existing = self.data[program_id]
-        updated_intervals = _process_event(event)
         event_date = _extract_date(event.event_name)
 
-        # Replace intervals for this event's date in the forecast
+        # Every op first removes this event's prior contribution from the forecast.
         forecast = [
             e for e in existing.forecast
             if e.get("date") != event_date
         ]
-        forecast.extend(updated_intervals)
-        forecast.sort(key=lambda e: (e.get("date", ""), e["hour"]))
-
-        # Update event names list
         event_names = list(existing.event_names)
-        if event.event_name and event.event_name not in event_names:
-            event_names.append(event.event_name)
-            event_names.sort()
 
-        # Recompute today's schedule
+        if operation == "DELETE":
+            event_names = [n for n in event_names if n != event.event_name]
+        else:
+            forecast.extend(_process_event(event))
+            forecast.sort(key=lambda e: (e.get("date", ""), e["hour"]))
+            if event.event_name and event.event_name not in event_names:
+                event_names.append(event.event_name)
+                event_names.sort()
+
+        # Recompute today's schedule from the updated forecast.
         today_str = dt_util.now().strftime("%Y-%m-%d")
         today_schedule = [e for e in forecast if e.get("date") == today_str]
-        if not today_schedule:
+        # For non-DELETE, preserve the previous schedule if the update happened to
+        # be for a non-today date and we have no today rows otherwise.
+        if not today_schedule and operation != "DELETE":
             today_schedule = existing.schedule
 
         daily_min, daily_max, daily_avg = _compute_daily_stats(today_schedule)
