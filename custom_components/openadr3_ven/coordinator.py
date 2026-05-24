@@ -53,28 +53,53 @@ def _extract_date(event_name: str | None) -> str | None:
 
 
 def _process_event(event: Event) -> list[dict[str, Any]]:
-    """Extract hourly schedule from an event's intervals."""
+    """Expand an event's intervals into per-local-hour schedule rows.
+
+    Each interval is positioned in time by intervalPeriod.start +
+    intervalPeriod.duration and expanded to one row per hour it covers in the
+    HA local timezone. This handles TOU events whose intervals span multiple
+    hours (e.g. 3 intervals × variable duration = 24 hourly rows). Falls back
+    to interval.id as hour-of-day only when intervalPeriod is absent.
+    """
     if not event.intervals:
         return []
 
-    date_str = _extract_date(event.event_name)
+    fallback_date = _extract_date(event.event_name)
+    local_tz_key = dt_util.DEFAULT_TIME_ZONE.key
+    schedule: list[dict[str, Any]] = []
 
-    schedule = []
     for interval in event.intervals:
         if not interval.payloads:
             continue
         payload = interval.payloads[0]
         raw_value = payload.values[0] if payload.values else None
         value = float(raw_value) if raw_value is not None else None
-        entry: dict[str, Any] = {
-            "hour": interval.id,
-            "value": value,
-            "payload_type": payload.type,
-        }
-        if date_str:
-            entry["date"] = date_str
-            entry["datetime"] = f"{date_str}T{interval.id:02d}:00:00"
-        schedule.append(entry)
+
+        ip = interval.interval_period
+        if ip is not None and ip.start is not None and ip.duration is not None:
+            duration_hours = max(
+                1, int(round(ip.duration.total_seconds() / 3600))
+            )
+            start_local = ip.start.in_timezone(local_tz_key).start_of("hour")
+            for offset in range(duration_hours):
+                slot = start_local.add(hours=offset)
+                schedule.append({
+                    "hour": slot.hour,
+                    "value": value,
+                    "payload_type": payload.type,
+                    "date": slot.format("YYYY-MM-DD"),
+                    "datetime": slot.to_iso8601_string(),
+                })
+        else:
+            entry: dict[str, Any] = {
+                "hour": interval.id,
+                "value": value,
+                "payload_type": payload.type,
+            }
+            if fallback_date:
+                entry["date"] = fallback_date
+                entry["datetime"] = f"{fallback_date}T{interval.id:02d}:00:00"
+            schedule.append(entry)
 
     return sorted(schedule, key=lambda s: (s.get("date", ""), s["hour"]))
 
@@ -106,30 +131,19 @@ def _build_program_data(
 
     # Build combined forecast from all events
     forecast: list[dict[str, Any]] = []
-    today_schedule: list[dict[str, Any]] = []
     event_names: list[str] = []
 
     for event in dated_events:
-        intervals = _process_event(event)
-        forecast.extend(intervals)
+        forecast.extend(_process_event(event))
         event_names.append(event.event_name or "")
 
-        event_date = _extract_date(event.event_name)
-        if event_date == today_str:
-            today_schedule = intervals
+    # Today's schedule is whatever forecast rows fall on today's local date.
+    today_schedule = [e for e in forecast if e.get("date") == today_str]
 
-    # If no today event, use the nearest event that has the current hour
+    # Last resort: if nothing matches today (e.g. no event for today), use the
+    # earliest dated event's rows so consumers see *something* rather than nothing.
     if not today_schedule and dated_events:
-        current_hour = dt_util.now().hour
-        for event in dated_events:
-            if event.intervals:
-                hours = {iv.id for iv in event.intervals}
-                if current_hour in hours:
-                    today_schedule = _process_event(event)
-                    break
-        # Last resort: use the earliest event
-        if not today_schedule:
-            today_schedule = _process_event(dated_events[0])
+        today_schedule = _process_event(dated_events[0])
 
     daily_min, daily_max, daily_avg = _compute_daily_stats(today_schedule)
 
