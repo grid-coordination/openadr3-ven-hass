@@ -81,6 +81,8 @@ The integration positions each VTN interval in time using its `intervalPeriod.st
 
 The `datetime` field on every row is a full ISO 8601 timestamp with timezone offset (e.g. `2026-05-23T01:00:00-07:00`), expressing the row's start-of-hour in HA local time. Downstream consumers can read `datetime` directly without needing to infer the tariff's local timezone.
 
+> **Note** — The integration currently models all schedules at 1-hour granularity. Sub-hourly intervals (PT30M / PT15M / PT5M) from highly-dynamic rate designs are not yet supported and would require a schema addition (a per-row granularity field) plus changes to the `current_hour` / `next_hour` sensor attributes. The Grid Coordination Energy Price Server currently publishes everything at hourly granularity, but this integration is designed to work with any OpenADR 3 VTN — if you encounter a VTN that emits sub-hourly intervals, please [comment on issue #8](https://github.com/grid-coordination/openadr3-ven-hass/issues/8) with the program details so we can prioritize. See the [Limitations](#limitations) section.
+
 ### Dashboard
 
 Current values can be displayed with [Mushroom Cards](https://github.com/piitaya/lovelace-mushroom) and the 72-hour forecast as charts using [ApexCharts Card](https://github.com/RomRider/apexcharts-card). See the [Dashboard Setup Guide](docs/dashboard.md) for full configuration.
@@ -102,6 +104,7 @@ See the [Price Server User Guide](https://github.com/grid-coordination/price-ser
 ## Limitations
 
 - **No authentication support yet** — currently only VTNs that allow anonymous/unauthenticated access are supported. OAuth2 and token-based authentication are planned for a future release.
+- **Hourly granularity only** — sub-hourly intervals (PT30M / PT15M / PT5M) from highly-dynamic rate designs are not yet supported. Intervals shorter than one hour would be rounded up to 1h and could misrepresent the underlying values. The Grid Coordination Energy Price Server uses hourly intervals (and coarser TOU-period intervals that normalize cleanly into hourly buckets), but this integration is designed to work with any OpenADR 3 VTN. If you encounter a VTN emitting sub-hourly intervals, please comment on [issue #8](https://github.com/grid-coordination/openadr3-ven-hass/issues/8) with the program details so we can prioritize.
 
 ## Requirements
 
