@@ -7,6 +7,9 @@
 
 A Home Assistant custom integration that acts as an [OpenADR 3](https://www.openadr.org/) Virtual End Node (VEN). It connects to an OpenADR 3 VTN, subscribes to programs (energy pricing, GHG emissions), and surfaces real-time data as Home Assistant sensors.
 
+> [!IMPORTANT]
+> **This integration is in active early development.** We're learning from user feedback as real-world VTNs come online — multi-payload programs, sub-hourly intervals, and two-way (import/export) tariffs have each driven structural changes. Expect occasional breaking changes between minor versions when they're needed to fix correctness issues or to align with Home Assistant's modern patterns. Read the release notes before updating, and pin to a specific version if you need stability between upgrades.
+
 ## Features
 
 - **One sensor per OpenADR 3 payload type** — `PRICE`, `EXPORT_PRICE`, `GHG`, and any other payload type a program publishes are each exposed as their own Home Assistant sensor
@@ -101,12 +104,14 @@ Current values can be displayed with [Mushroom Cards](https://github.com/piitaya
 
 ## Upgrading from 0.3.x
 
-Version 0.4.0 is a **breaking change** for existing dashboards. Two things change:
+Upgrade directly to **0.4.1 or later** (0.4.0 had a payload-type case-mismatch bug that left sensors stuck at "unknown"; 0.4.1 fixes it).
+
+0.4.x is a **breaking change** for existing dashboards. Two things change:
 
 1. **Forecast moved from entity attribute to service call.** Lovelace cards using `data_generator: entity.attributes.forecast` will return empty arrays. Replace them with the service-call recipe in [docs/dashboard.md](docs/dashboard.md).
-2. **One sensor per payload type per program.** A program that previously created a single `sensor.openadr3_vtn_<program>` sensor for its first payload type now creates one sensor per type (e.g. `..._price`, `..._export_price`). The existing entity is migrated in place — its history and unique_id survive — but additional payload types appear as new entities.
+2. **One sensor per payload type per program.** A program that previously created a single `sensor.openadr3_vtn_<program>` sensor for its first payload type now creates one sensor per type (e.g. `..._price`, `..._export_price`). The existing entity is migrated in place — its history and unique_id survive — but additional payload types appear as new entities, and the display name gains a payload-type suffix (e.g. `EELEC-024131103` → `EELEC-024131103 Price`).
 
-Sensor states and the small attribute surface (`daily_min`, `daily_max`, `current_interval_start`, etc.) keep working through the upgrade without intervention.
+Sensor states and the small attribute surface (`daily_min`, `daily_max`, `current_interval_start`, etc.) keep working through the upgrade without intervention. The config-entry migration runs automatically on first restart.
 
 ## Compatible VTNs
 
