@@ -107,13 +107,19 @@ def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
                 row_base["datetime"] = f"{fallback_date}T{interval.id:02d}:00:00"
 
         for payload in interval.payloads:
+            # The openadr3 lib's coerce_payload lowercases payload.type. The OA3
+            # spec uses UPPER_SNAKE_CASE ("PRICE", "EXPORT_PRICE", "GHG"), and
+            # program payload descriptors also surface it that way. Normalize
+            # back to UPPER here so descriptor/CONF_PROGRAMS/sensor-lookup keys
+            # all match. Tracked upstream as a python-oa3 bug.
+            ptype = (payload.type or "").upper()
             raw_value = payload.values[0] if payload.values else None
             value = float(raw_value) if raw_value is not None else None
-            rows = by_type.setdefault(payload.type, [])
+            rows = by_type.setdefault(ptype, [])
             rows.append({
                 **row_base,
                 "value": value,
-                "payload_type": payload.type,
+                "payload_type": ptype,
                 "source_event": source_event,
             })
 
