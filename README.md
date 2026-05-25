@@ -9,11 +9,12 @@ A Home Assistant custom integration that acts as an [OpenADR 3](https://www.open
 
 ## Features
 
-- **Energy pricing sensors** — current-hour electricity price ($/kWh) with full 24-hour schedule
-- **GHG emissions sensors** — marginal operating emissions rate (g CO₂/kWh)
+- **One sensor per OpenADR 3 payload type** — `PRICE`, `EXPORT_PRICE`, `GHG`, and any other payload type a program publishes are each exposed as their own Home Assistant sensor
+- **Native interval granularity** — sub-hourly intervals (PT5M / PT15M / PT30M) are preserved; the integration does not down-sample to hourly
+- **Forecast via service call** — full multi-day forecast available on demand via the `openadr3_ven.get_forecast` service, matching Home Assistant's modern weather-forecast pattern
 - **MQTT push updates** — near-real-time sensor updates when the VTN supports MQTT notifications
 - **Multi-program support** — subscribe to any combination of programs from the VTN
-- **Daily statistics** — min, max, and average values as sensor attributes
+- **Daily statistics** — duration-weighted min, max, and average values as sensor attributes
 
 ## Installation
 
@@ -47,45 +48,65 @@ A Home Assistant custom integration that acts as an [OpenADR 3](https://www.open
 
 ## Sensor Data
 
-Each subscribed program creates a sensor with:
+Each program creates one sensor per OpenADR 3 payload type the program publishes. A program publishing `[PRICE, EXPORT_PRICE, RRP]` produces three sensors; a program publishing only `[PRICE]` produces one. Sensor names are derived from the program name plus the payload type (e.g. `AU-NSW1-AUSGRID-EA025 Export Price`).
+
+### Sensor state and attributes
 
 | Property | Description |
 |----------|-------------|
-| State | Current hour's value (price or emissions) |
-| `event_names` | List of event names contributing to the forecast |
-| `next_hour_value` | Next hour's value |
-| `daily_min` / `daily_max` / `daily_avg` | Daily statistics |
-| `schedule` | Today's 24 hourly entries, one per local hour |
-| `forecast` | Multi-day hourly forecast (typically 72 hours), one entry per local hour |
-| `forecast_hours` | Number of forecast hours available |
-| `payload_type` | `PRICE` or `GHG` |
+| State (`native_value`) | Value of the interval covering wall-clock now, at the VTN's native granularity |
+| `payload_type` | The OpenADR 3 payload type identifier (`PRICE`, `EXPORT_PRICE`, `GHG`, `RRP`, …) |
+| `current_interval_start` / `current_interval_end` | ISO 8601 timestamps bounding the slot whose value drives the state |
+| `interval_minutes` | Duration of the current slot, in minutes (5, 15, 30, 60, …) |
+| `next_interval_value` / `next_interval_datetime` | Value and start of the next interval after the current one |
+| `daily_min` / `daily_max` / `daily_avg` | Duration-weighted daily statistics for today |
+| `event_names` | List of OpenADR 3 event names contributing to the forecast |
+| `forecast_rows` / `forecast_start` / `forecast_end` | Size and range of the full forecast (read it via the `openadr3_ven.get_forecast` service) |
 
-Each `schedule` / `forecast` entry is shaped:
+The full forecast is **not** exposed as an entity attribute. Home Assistant's recorder has a 16 KB cap on `extra_state_attributes`; a 7-day forecast at PT30M is comfortably over that and a PT5M live + PT30M rolling forecast more so. Instead, the forecast is returned by a service call on demand:
 
-```json
-{
-  "date": "2026-05-23",
-  "datetime": "2026-05-23T01:00:00-07:00",
-  "hour": 1,
-  "value": 0.26301,
-  "payload_type": "PRICE"
-}
+```yaml
+service: openadr3_ven.get_forecast
+target:
+  entity_id: sensor.openadr3_vtn_au_nsw1_ausgrid_ea025_price
+data:
+  start: "2026-05-25T00:00:00+10:00"   # optional
+  end:   "2026-06-01T00:00:00+10:00"   # optional
 ```
+
+The response (per entity) is:
+
+```yaml
+payload_type: PRICE
+unit: $/kWh
+forecast:
+  - datetime: "2026-05-25T17:05:00+10:00"
+    value: 0.171915
+    interval_minutes: 5
+  - datetime: "2026-05-25T17:10:00+10:00"
+    value: 0.234
+    interval_minutes: 30
+  ...
+```
+
+This matches the pattern Home Assistant uses for its own weather entities (`weather.get_forecasts`). Lovelace cards read the forecast via a `data_generator` that calls the service — see the [Dashboard Setup Guide](docs/dashboard.md) for the recipe.
 
 ### Time and timezone
 
-The integration positions each VTN interval in time using its `intervalPeriod.start` + `duration` (per the OpenADR 3 spec), then expands it into one entry per hour it covers in Home Assistant's local timezone. This handles both common event shapes uniformly:
-
-- **24 × PT1H** intervals (e.g. CAISO-derived day-ahead pricing) — one row per hour, `interval.id == hour`.
-- **TOU-period** intervals with a handful of variable-duration entries (e.g. 3 intervals × `PT16H` / `PT5H` / `PT3H` covering 24 hours, as used by most utility TOU rate schedules) — expanded into 24 hourly rows with the same price repeated across the hours each interval covers.
-
-The `datetime` field on every row is a full ISO 8601 timestamp with timezone offset (e.g. `2026-05-23T01:00:00-07:00`), expressing the row's start-of-hour in HA local time. Downstream consumers can read `datetime` directly without needing to infer the tariff's local timezone.
-
-> **Note** — The integration currently models all schedules at 1-hour granularity. Sub-hourly intervals (PT30M / PT15M / PT5M) from highly-dynamic rate designs are not yet supported and would require a schema addition (a per-row granularity field) plus changes to the `current_hour` / `next_hour` sensor attributes. The Grid Coordination Energy Price Server currently publishes everything at hourly granularity, but this integration is designed to work with any OpenADR 3 VTN — if you encounter a VTN that emits sub-hourly intervals, please [comment on issue #8](https://github.com/grid-coordination/openadr3-ven-hass/issues/8) with the program details so we can prioritize. See the [Limitations](#limitations) section.
+The integration positions each VTN interval in time using its `intervalPeriod.start` + `duration` (per the OpenADR 3 spec) and emits it as a row in HA local timezone with no down-sampling. A PT5M interval stays PT5M; a PT30M interval stays PT30M; an hourly interval stays hourly. The `datetime` field on every row is a full ISO 8601 timestamp with timezone offset (e.g. `2026-05-23T01:00:00-07:00`).
 
 ### Dashboard
 
-Current values can be displayed with [Mushroom Cards](https://github.com/piitaya/lovelace-mushroom) and the 72-hour forecast as charts using [ApexCharts Card](https://github.com/RomRider/apexcharts-card). See the [Dashboard Setup Guide](docs/dashboard.md) for full configuration.
+Current values can be displayed with [Mushroom Cards](https://github.com/piitaya/lovelace-mushroom) and the forecast as charts using [ApexCharts Card](https://github.com/RomRider/apexcharts-card). See the [Dashboard Setup Guide](docs/dashboard.md) for full configuration, including the `data_generator` recipe for reading the forecast via the service call.
+
+## Upgrading from 0.3.x
+
+Version 0.4.0 is a **breaking change** for existing dashboards. Two things change:
+
+1. **Forecast moved from entity attribute to service call.** Lovelace cards using `data_generator: entity.attributes.forecast` will return empty arrays. Replace them with the service-call recipe in [docs/dashboard.md](docs/dashboard.md).
+2. **One sensor per payload type per program.** A program that previously created a single `sensor.openadr3_vtn_<program>` sensor for its first payload type now creates one sensor per type (e.g. `..._price`, `..._export_price`). The existing entity is migrated in place — its history and unique_id survive — but additional payload types appear as new entities.
+
+Sensor states and the small attribute surface (`daily_min`, `daily_max`, `current_interval_start`, etc.) keep working through the upgrade without intervention.
 
 ## Compatible VTNs
 
@@ -104,7 +125,6 @@ See the [Price Server User Guide](https://github.com/grid-coordination/price-ser
 ## Limitations
 
 - **No authentication support yet** — currently only VTNs that allow anonymous/unauthenticated access are supported. OAuth2 and token-based authentication are planned for a future release.
-- **Hourly granularity only** — sub-hourly intervals (PT30M / PT15M / PT5M) from highly-dynamic rate designs are not yet supported. Intervals shorter than one hour would be rounded up to 1h and could misrepresent the underlying values. The Grid Coordination Energy Price Server uses hourly intervals (and coarser TOU-period intervals that normalize cleanly into hourly buckets), but this integration is designed to work with any OpenADR 3 VTN. If you encounter a VTN emitting sub-hourly intervals, please comment on [issue #8](https://github.com/grid-coordination/openadr3-ven-hass/issues/8) with the program details so we can prioritize.
 
 ## Requirements
 

@@ -18,7 +18,7 @@
           "programs": "Programs"
         },
         "data_description": {
-          "programs": "Select the programs you want to subscribe to"
+          "programs": "Select the programs you want to subscribe to. One sensor entity will be created per payload type that each program publishes."
         }
       }
     },
@@ -28,6 +28,22 @@
     },
     "abort": {
       "already_configured": "Service is already configured"
+    }
+  },
+  "services": {
+    "get_forecast": {
+      "name": "Get forecast",
+      "description": "Return the full forecast for an OpenADR 3 sensor at the VTN's native interval granularity.",
+      "fields": {
+        "start": {
+          "name": "Start",
+          "description": "Earliest interval start time to include (inclusive)."
+        },
+        "end": {
+          "name": "End",
+          "description": "Latest interval start time to include (exclusive)."
+        }
+      }
     }
   }
 }

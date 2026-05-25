@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 class OpenADR3VENConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for OpenADR 3 VEN."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -45,10 +45,8 @@ class OpenADR3VENConfigFlow(ConfigFlow, domain=DOMAIN):
             self._vtn_url = user_input[CONF_VTN_URL].rstrip("/")
             self._ven_name = user_input.get(CONF_VEN_NAME, DEFAULT_VEN_NAME)
 
-            # Check if already configured with this URL
             self._async_abort_entries_match({CONF_VTN_URL: self._vtn_url})
 
-            # Test connection and fetch programs
             client = VtnApiClient(self._vtn_url)
             try:
                 programs = await client.get_all_programs()
@@ -62,10 +60,9 @@ class OpenADR3VENConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         "id": p.id,
                         "name": p.program_name,
-                        "payload_type": (
-                            p.payload_descriptors[0].payload_type
-                            if p.payload_descriptors
-                            else "UNKNOWN"
+                        "payload_types": (
+                            [pd.payload_type for pd in p.payload_descriptors]
+                            if p.payload_descriptors else ["UNKNOWN"]
                         ),
                     }
                     for p in programs
@@ -95,7 +92,6 @@ class OpenADR3VENConfigFlow(ConfigFlow, domain=DOMAIN):
                 p for p in self._programs if p["id"] in selected_ids
             ]
 
-            # Derive a friendly VTN name from the URL
             vtn_name = self._vtn_url.split("//")[-1].split("/")[0]
 
             return self.async_create_entry(
@@ -108,9 +104,10 @@ class OpenADR3VENConfigFlow(ConfigFlow, domain=DOMAIN):
                 },
             )
 
-        # Build multi-select options: {program_id: "program_name (PAYLOAD_TYPE)"}
+        # Picker label shows all payload types so the user can see what they're
+        # signing up for — one sensor per payload type per selected program.
         program_options = {
-            p["id"]: f"{p['name']} ({p['payload_type']})"
+            p["id"]: f"{p['name']} ({', '.join(p['payload_types'])})"
             for p in sorted(self._programs, key=lambda p: p["name"])
         }
 

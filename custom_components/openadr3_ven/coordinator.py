@@ -26,22 +26,29 @@ _DATE_SUFFIX_RE = re.compile(r"(\d{4}-\d{2}-\d{2})$")
 
 
 @dataclass
-class ProgramData:
-    """Processed data for a single program."""
+class PayloadData:
+    """Per-payload-type forecast for a single program.
 
-    program_id: str
-    program_name: str
+    `forecast` holds rows at the VTN's native interval granularity — each row
+    represents one interval and carries enough information to be located in
+    time (datetime, interval_minutes). No hour-bucketing is applied.
+    """
+
     payload_type: str
-    # Today's schedule (24 hourly entries for the current day's event)
-    schedule: list[dict[str, Any]] = field(default_factory=list)
-    # Multi-day forecast (all available hourly entries with ISO datetime keys)
     forecast: list[dict[str, Any]] = field(default_factory=list)
-    # Per-day event names
-    event_names: list[str] = field(default_factory=list)
-    # Today's stats
     daily_min: float | None = None
     daily_max: float | None = None
     daily_avg: float | None = None
+
+
+@dataclass
+class ProgramData:
+    """Processed data for a single program; may carry multiple payload types."""
+
+    program_id: str
+    program_name: str
+    event_names: list[str] = field(default_factory=list)
+    payloads: dict[str, PayloadData] = field(default_factory=dict)
 
 
 def _extract_date(event_name: str | None) -> str | None:
@@ -52,111 +59,144 @@ def _extract_date(event_name: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def _process_event(event: Event) -> list[dict[str, Any]]:
-    """Expand an event's intervals into per-local-hour schedule rows.
+def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
+    """Expand an event into per-payload-type row streams at native granularity.
 
-    Each interval is positioned in time by intervalPeriod.start +
-    intervalPeriod.duration and expanded to one row per hour it covers in the
-    HA local timezone. This handles TOU events whose intervals span multiple
-    hours (e.g. 3 intervals × variable duration = 24 hourly rows). Falls back
-    to interval.id as hour-of-day only when intervalPeriod is absent.
+    Each interval becomes one row per payload it carries. The row is positioned
+    in time by intervalPeriod.start (in HA local timezone) and tagged with
+    interval_minutes so consumers can do time-window scans. Multi-payload
+    intervals (e.g. PRICE + EXPORT_PRICE + RRP) fan out into separate streams,
+    one per payload type.
+
+    Falls back to interval.id as hour-of-day at PT1H when intervalPeriod is
+    absent — legacy path for VTNs that don't populate per-interval timing.
     """
     if not event.intervals:
-        return []
+        return {}
 
     fallback_date = _extract_date(event.event_name)
+    source_event = event.event_name
     local_tz_key = dt_util.DEFAULT_TIME_ZONE.key
-    schedule: list[dict[str, Any]] = []
+    by_type: dict[str, list[dict[str, Any]]] = {}
 
     for interval in event.intervals:
         if not interval.payloads:
             continue
-        payload = interval.payloads[0]
-        raw_value = payload.values[0] if payload.values else None
-        value = float(raw_value) if raw_value is not None else None
 
         ip = interval.interval_period
         if ip is not None and ip.start is not None and ip.duration is not None:
-            duration_hours = max(
-                1, int(round(ip.duration.total_seconds() / 3600))
+            duration_minutes = max(
+                1, int(round(ip.duration.total_seconds() / 60))
             )
-            start_local = ip.start.in_timezone(local_tz_key).start_of("hour")
-            for offset in range(duration_hours):
-                slot = start_local.add(hours=offset)
-                schedule.append({
-                    "hour": slot.hour,
-                    "value": value,
-                    "payload_type": payload.type,
-                    "date": slot.format("YYYY-MM-DD"),
-                    "datetime": slot.to_iso8601_string(),
-                })
+            start_local = ip.start.in_timezone(local_tz_key)
+            row_base = {
+                "date": start_local.format("YYYY-MM-DD"),
+                "hour": start_local.hour,
+                "minute": start_local.minute,
+                "interval_minutes": duration_minutes,
+                "datetime": start_local.to_iso8601_string(),
+            }
         else:
-            entry: dict[str, Any] = {
+            row_base = {
                 "hour": interval.id,
-                "value": value,
-                "payload_type": payload.type,
+                "minute": 0,
+                "interval_minutes": 60,
             }
             if fallback_date:
-                entry["date"] = fallback_date
-                entry["datetime"] = f"{fallback_date}T{interval.id:02d}:00:00"
-            schedule.append(entry)
+                row_base["date"] = fallback_date
+                row_base["datetime"] = f"{fallback_date}T{interval.id:02d}:00:00"
 
-    return sorted(schedule, key=lambda s: (s.get("date", ""), s["hour"]))
+        for payload in interval.payloads:
+            raw_value = payload.values[0] if payload.values else None
+            value = float(raw_value) if raw_value is not None else None
+            rows = by_type.setdefault(payload.type, [])
+            rows.append({
+                **row_base,
+                "value": value,
+                "payload_type": payload.type,
+                "source_event": source_event,
+            })
+
+    for rows in by_type.values():
+        rows.sort(key=lambda r: r.get("datetime", ""))
+
+    return by_type
 
 
 def _compute_daily_stats(
-    schedule: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    today_str: str,
 ) -> tuple[float | None, float | None, float | None]:
-    """Compute min, max, avg from a schedule."""
-    values = [e["value"] for e in schedule if e["value"] is not None]
-    if not values:
+    """Duration-weighted daily stats for rate-shaped payloads.
+
+    All currently-supported payload types (PRICE, EXPORT_PRICE, GHG, RRP) are
+    rate-shaped: the value is a $/kWh- or g/kWh-style intensity that applies
+    uniformly across the interval. The mean is therefore a duration-weighted
+    average: sum(value * minutes) / sum(minutes).
+
+    If a flow-shaped event payload is ever added (e.g. an event-side USAGE in
+    kWh per interval), this site needs a payload-kind dispatch — flow
+    aggregation is sum(value), not weighted-mean.
+    """
+    todays = [
+        r for r in rows
+        if r.get("date") == today_str and r.get("value") is not None
+    ]
+    if not todays:
         return None, None, None
-    return min(values), max(values), sum(values) / len(values)
+    values = [r["value"] for r in todays]
+    weights = [r.get("interval_minutes", 60) for r in todays]
+    total_weight = sum(weights)
+    avg = (
+        sum(v * w for v, w in zip(values, weights)) / total_weight
+        if total_weight > 0 else None
+    )
+    return min(values), max(values), avg
 
 
 def _build_program_data(
     program_id: str,
     program_name: str,
-    payload_type: str,
+    payload_types: list[str],
     events: list[Event],
 ) -> ProgramData:
     """Process all events for a program into a ProgramData."""
     today_str = dt_util.now().strftime("%Y-%m-%d")
 
-    # Sort events chronologically by date in event name
     dated_events = sorted(
         [e for e in events if e.event_name],
         key=lambda e: e.event_name,
     )
 
-    # Build combined forecast from all events
-    forecast: list[dict[str, Any]] = []
+    # Seed with the configured payload types so an entity always exists even
+    # if the VTN hasn't published any matching events yet.
+    by_type_forecast: dict[str, list[dict[str, Any]]] = {
+        pt: [] for pt in payload_types
+    }
     event_names: list[str] = []
 
     for event in dated_events:
-        forecast.extend(_process_event(event))
+        for ptype, rows in _process_event(event).items():
+            by_type_forecast.setdefault(ptype, []).extend(rows)
         event_names.append(event.event_name or "")
 
-    # Today's schedule is whatever forecast rows fall on today's local date.
-    today_schedule = [e for e in forecast if e.get("date") == today_str]
-
-    # Last resort: if nothing matches today (e.g. no event for today), use the
-    # earliest dated event's rows so consumers see *something* rather than nothing.
-    if not today_schedule and dated_events:
-        today_schedule = _process_event(dated_events[0])
-
-    daily_min, daily_max, daily_avg = _compute_daily_stats(today_schedule)
+    payloads: dict[str, PayloadData] = {}
+    for ptype, forecast in by_type_forecast.items():
+        forecast.sort(key=lambda r: r.get("datetime", ""))
+        daily_min, daily_max, daily_avg = _compute_daily_stats(forecast, today_str)
+        payloads[ptype] = PayloadData(
+            payload_type=ptype,
+            forecast=forecast,
+            daily_min=daily_min,
+            daily_max=daily_max,
+            daily_avg=daily_avg,
+        )
 
     return ProgramData(
         program_id=program_id,
         program_name=program_name,
-        payload_type=payload_type,
-        schedule=today_schedule,
-        forecast=forecast,
         event_names=event_names,
-        daily_min=daily_min,
-        daily_max=daily_max,
-        daily_avg=daily_avg,
+        payloads=payloads,
     )
 
 
@@ -199,7 +239,6 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
         programs_config = self.config_entry.data[CONF_PROGRAMS]
         program_ids = {p["id"] for p in programs_config}
 
-        # Fetch per-program event topics from the VTN
         topics = await self.client.get_all_program_event_topics(program_ids)
         if not topics:
             _LOGGER.warning("No MQTT event topics found for subscribed programs")
@@ -263,52 +302,61 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
         """Handle an event received via MQTT (called from MQTT thread).
 
         Branches on the notification's operation:
-          CREATE/UPDATE/READ → merge intervals for the event's date into the forecast.
-          DELETE             → purge intervals for the event's date and drop its name.
+          CREATE/UPDATE/READ → drop prior rows from this event and re-emit from the new payload.
+          DELETE             → drop prior rows from this event and forget its name.
+
+        Dedup is keyed on the OA3 event name (`source_event`), not on a parsed
+        date suffix. The previous date-suffix approach silently failed for VTNs
+        whose event names don't carry a date — rows accumulated forever on
+        repeated MQTT updates because the filter matched nothing to remove.
         """
         program_id = event.program_id
         if self.data is None or program_id not in self.data:
             return
 
         existing = self.data[program_id]
-        event_date = _extract_date(event.event_name)
-
-        # Every op first removes this event's prior contribution from the forecast.
-        forecast = [
-            e for e in existing.forecast
-            if e.get("date") != event_date
-        ]
-        event_names = list(existing.event_names)
-
-        if operation == "DELETE":
-            event_names = [n for n in event_names if n != event.event_name]
-        else:
-            forecast.extend(_process_event(event))
-            forecast.sort(key=lambda e: (e.get("date", ""), e["hour"]))
-            if event.event_name and event.event_name not in event_names:
-                event_names.append(event.event_name)
-                event_names.sort()
-
-        # Recompute today's schedule from the updated forecast.
+        event_name = event.event_name
+        new_streams = (
+            _process_event(event) if operation != "DELETE" else {}
+        )
         today_str = dt_util.now().strftime("%Y-%m-%d")
-        today_schedule = [e for e in forecast if e.get("date") == today_str]
-        # For non-DELETE, preserve the previous schedule if the update happened to
-        # be for a non-today date and we have no today rows otherwise.
-        if not today_schedule and operation != "DELETE":
-            today_schedule = existing.schedule
 
-        daily_min, daily_max, daily_avg = _compute_daily_stats(today_schedule)
+        # Touch every payload type known to the existing program plus any new
+        # ones from the incoming event (the VTN may have added a descriptor).
+        all_types = set(existing.payloads.keys()) | set(new_streams.keys())
+        new_payloads: dict[str, PayloadData] = {}
+
+        for ptype in all_types:
+            old = existing.payloads.get(ptype)
+            old_forecast = old.forecast if old is not None else []
+            forecast = [
+                r for r in old_forecast if r.get("source_event") != event_name
+            ]
+            if operation != "DELETE":
+                forecast.extend(new_streams.get(ptype, []))
+                forecast.sort(key=lambda r: r.get("datetime", ""))
+
+            daily_min, daily_max, daily_avg = _compute_daily_stats(forecast, today_str)
+            new_payloads[ptype] = PayloadData(
+                payload_type=ptype,
+                forecast=forecast,
+                daily_min=daily_min,
+                daily_max=daily_max,
+                daily_avg=daily_avg,
+            )
+
+        event_names = list(existing.event_names)
+        if operation == "DELETE":
+            event_names = [n for n in event_names if n != event_name]
+        elif event_name and event_name not in event_names:
+            event_names.append(event_name)
+            event_names.sort()
 
         updated_program = ProgramData(
             program_id=program_id,
             program_name=existing.program_name,
-            payload_type=existing.payload_type,
-            schedule=today_schedule,
-            forecast=forecast,
             event_names=event_names,
-            daily_min=daily_min,
-            daily_max=daily_max,
-            daily_avg=daily_avg,
+            payloads=new_payloads,
         )
 
         new_data = {**self.data, program_id: updated_program}
@@ -322,7 +370,7 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
         for prog in programs_config:
             program_id = prog["id"]
             program_name = prog["name"]
-            payload_type = prog["payload_type"]
+            payload_types = list(prog["payload_types"])
 
             try:
                 events = await self.client.get_events(program_id)
@@ -338,12 +386,15 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
                     data[program_id] = ProgramData(
                         program_id=program_id,
                         program_name=program_name,
-                        payload_type=payload_type,
+                        payloads={
+                            pt: PayloadData(payload_type=pt)
+                            for pt in payload_types
+                        },
                     )
                 continue
 
             data[program_id] = _build_program_data(
-                program_id, program_name, payload_type, events
+                program_id, program_name, payload_types, events
             )
 
         if not data:
