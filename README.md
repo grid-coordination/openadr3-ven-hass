@@ -102,9 +102,9 @@ The integration positions each VTN interval in time using its `intervalPeriod.st
 
 Current values can be displayed with [Mushroom Cards](https://github.com/piitaya/lovelace-mushroom) and the forecast as charts using [ApexCharts Card](https://github.com/RomRider/apexcharts-card). See the [Dashboard Setup Guide](docs/dashboard.md) for full configuration, including the `data_generator` recipe for reading the forecast via the service call.
 
-## Upgrading from 0.3.x
+## Upgrading from 0.2.x or 0.3.x
 
-Upgrade directly to **0.4.1 or later** (0.4.0 had a payload-type case-mismatch bug that left sensors stuck at "unknown"; 0.4.1 fixes it).
+Upgrade directly to **0.4.1 or later** (0.4.0 had a payload-type case-mismatch bug that left sensors stuck at "unknown"; 0.4.1 fixes it). The config-entry migration handles either 0.2.x or 0.3.x starting points — schema v1 → v2 is the same hop.
 
 0.4.x is a **breaking change** for existing dashboards. Two things change:
 
