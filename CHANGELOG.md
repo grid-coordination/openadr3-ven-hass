@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
+## [0.4.2] — 2026-05-25
+
+### Added
+
+- Adaptive coordinator polling cadence + slot-boundary-aligned refresh. The integration now derives its poll interval from each program's `min_interval_minutes` (clamped to `[60s, 3600s]`) instead of a fixed hourly cadence. A boundary-aligned trigger fires `10s` after every slot start so sub-hourly VTNs see updated values within ~10s of the upstream slot rolling over. Without this, VTNs publishing at PT5M / PT30M (e.g. Mark Purcell's AU VTN) could go up to 60 minutes stale between polls, because openleadr-rs — the only OA3 VTN with active development — doesn't implement MQTT push at all, so polling is the sole update channel for those VTNs ([#11](https://github.com/grid-coordination/openadr3-ven-hass/issues/11)).
+
 ## [0.4.1] — 2026-05-25
 
 ### Fixed
@@ -95,6 +101,7 @@ Initial release.
 - HACS-compatible packaging (custom repository install).
 - Anonymous / unauthenticated VTN access (OAuth2 token support is on the roadmap).
 
+[0.4.2]: https://github.com/grid-coordination/openadr3-ven-hass/releases/tag/v0.4.2
 [0.4.1]: https://github.com/grid-coordination/openadr3-ven-hass/releases/tag/v0.4.1
 [0.4.0]: https://github.com/grid-coordination/openadr3-ven-hass/releases/tag/v0.4.0
 [0.3.0]: https://github.com/grid-coordination/openadr3-ven-hass/releases/tag/v0.3.0

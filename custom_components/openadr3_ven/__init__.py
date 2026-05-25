@@ -40,6 +40,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         coordinator: OpenADR3Coordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator._stop_boundary()
         await coordinator.async_stop_mqtt()
         await coordinator.client.close()
     return unload_ok

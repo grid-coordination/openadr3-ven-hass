@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -23,6 +25,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # Pattern to extract date from event names like EELEC-012041131-2026-04-21
 _DATE_SUFFIX_RE = re.compile(r"(\d{4}-\d{2}-\d{2})$")
+
+# Boundary-aligned refreshes fire this many seconds *after* the slot start, so
+# the VTN has a moment to publish the new slot's data before we poll.
+_BOUNDARY_OFFSET_SECONDS = 10
 
 
 @dataclass
@@ -227,6 +233,96 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
         self.client = client
         self._mqtt: MqttSubscriptionManager | None = None
         self._mqtt_connect_count = 0
+        self._boundary_cancel: Callable[[], None] | None = None
+        # Cadence we last applied; lets _reconfigure_polling skip work when
+        # nothing changed.
+        self._applied_cadence_minutes: int | None = None
+
+    @staticmethod
+    def _boundary_minutes(interval_min: int) -> list[int]:
+        """Clock minutes within the hour to fire boundary-aligned refreshes at.
+
+        For divisor cadences (PT5M / PT15M / PT30M / PT60M) the list aligns
+        naturally. For non-divisor cadences (e.g. PT7M) we fire at every minute
+        within the hour that's a multiple of the cadence — the alignment drifts
+        across hour boundaries but stays close enough that staleness never
+        exceeds one interval.
+        """
+        if interval_min >= 60 or interval_min <= 0:
+            return [0]
+        if 60 % interval_min == 0:
+            return list(range(0, 60, interval_min))
+        return [m for m in range(0, 60) if m % interval_min == 0]
+
+    @staticmethod
+    def _min_interval_minutes(data: dict[str, ProgramData]) -> int:
+        """Smallest non-zero interval_minutes across all program forecasts.
+
+        Defaults to 60 when no data is available yet (matches the legacy hourly
+        cadence assumption).
+        """
+        minutes: list[int] = []
+        for program in data.values():
+            for payload in program.payloads.values():
+                for row in payload.forecast:
+                    m = row.get("interval_minutes")
+                    if isinstance(m, int) and m > 0:
+                        minutes.append(m)
+        return min(minutes) if minutes else 60
+
+    @callback
+    def _reconfigure_polling(self, data: dict[str, ProgramData]) -> None:
+        """Match the polling cadence to the data's native interval granularity.
+
+        Sets `update_interval` to the program's `min_interval_minutes` (clamped
+        to [60s, 3600s]) and installs a slot-boundary-aligned trigger that
+        fires `_BOUNDARY_OFFSET_SECONDS` after each slot start. Boundary
+        alignment is what keeps a PT30M VTN from drifting up to 30 minutes
+        stale between polls — most tariff dynamics happen *at* the slot
+        boundary, not midway through.
+
+        Idempotent: if the cadence hasn't changed since the last call, this
+        is a no-op.
+        """
+        interval_min = self._min_interval_minutes(data)
+        if (
+            interval_min == self._applied_cadence_minutes
+            and self._boundary_cancel is not None
+        ):
+            return
+
+        self._applied_cadence_minutes = interval_min
+        safety_seconds = max(60, min(interval_min * 60, 3600))
+        self.update_interval = timedelta(seconds=safety_seconds)
+
+        if self._boundary_cancel is not None:
+            self._boundary_cancel()
+            self._boundary_cancel = None
+
+        boundaries = self._boundary_minutes(interval_min)
+        self._boundary_cancel = async_track_time_change(
+            self.hass,
+            self._on_boundary,
+            minute=boundaries,
+            second=_BOUNDARY_OFFSET_SECONDS,
+        )
+        _LOGGER.info(
+            "Adaptive polling reconfigured: native=%dmin safety_cadence=%s "
+            "boundary_minutes=%s offset=%ds",
+            interval_min, self.update_interval, boundaries,
+            _BOUNDARY_OFFSET_SECONDS,
+        )
+
+    async def _on_boundary(self, now: datetime) -> None:
+        """Refresh on a slot-boundary tick. Debounced by DataUpdateCoordinator."""
+        _LOGGER.debug("Slot-boundary refresh fired at %s", now.isoformat())
+        await self.async_request_refresh()
+
+    @callback
+    def _stop_boundary(self) -> None:
+        if self._boundary_cancel is not None:
+            self._boundary_cancel()
+            self._boundary_cancel = None
 
     async def async_start_mqtt(self) -> None:
         """Detect MQTT support and start subscription if available."""
@@ -367,6 +463,7 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
 
         new_data = {**self.data, program_id: updated_program}
         self.hass.loop.call_soon_threadsafe(self.async_set_updated_data, new_data)
+        self.hass.loop.call_soon_threadsafe(self._reconfigure_polling, new_data)
 
     async def _async_update_data(self) -> dict[str, ProgramData]:
         """Fetch events for all subscribed programs."""
@@ -406,4 +503,5 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
         if not data:
             raise UpdateFailed("No program data could be fetched")
 
+        self._reconfigure_polling(data)
         return data
