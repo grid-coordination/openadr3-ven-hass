@@ -105,7 +105,10 @@ class MqttSubscriptionManager:
         rc: mqtt.ReasonCode,
         properties: mqtt.Properties | None = None,
     ) -> None:
-        if rc == mqtt.ReasonCode(mqtt.CONNACK_ACCEPTED):
+        # rc.value == 0 means Success (MQTT v5) / Connection Accepted (v3.1.1).
+        # Constructing ReasonCode(CONNACK_ACCEPTED) raises on paho-mqtt 2.x —
+        # that constructor wants a name string, not the legacy int constant.
+        if rc.value == 0:
             _LOGGER.info(
                 "Connected to MQTT broker, subscribing to %d program topic(s)",
                 len(self._topics),
@@ -131,7 +134,8 @@ class MqttSubscriptionManager:
         properties: mqtt.Properties | None = None,
     ) -> None:
         self._connected = False
-        if rc != mqtt.ReasonCode(mqtt.CONNACK_ACCEPTED):
+        # rc.value == 0 means Normal Disconnection; non-zero is unexpected.
+        if rc.value != 0:
             _LOGGER.warning("Unexpected MQTT disconnect: %s (will auto-reconnect)", rc)
 
     def _on_message(

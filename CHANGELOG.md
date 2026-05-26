@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
+## [0.4.3] — 2026-05-26
+
+### Fixed
+
+- MQTT client crash on paho-mqtt 2.x (`KeyError: 'Reason code name not found: Success'`). `_on_connect` / `_on_disconnect` constructed a `ReasonCode` from the legacy `CONNACK_ACCEPTED` int, but paho-mqtt 2.x's `ReasonCode(packetType, aName)` expects a v5 name string — the lookup failed, the MQTT thread died on the first CONNACK, and sensors registered but stayed `Unknown` because event push was gone. Now compares `rc.value == 0` (Success / Normal Disconnection in both v3.1.1 and v5). Affects any HA core on paho-mqtt 2.x with MQTT enabled on a VTN ([#12](https://github.com/grid-coordination/openadr3-ven-hass/issues/12)).
+
 ## [0.4.2] — 2026-05-25
 
 ### Added
