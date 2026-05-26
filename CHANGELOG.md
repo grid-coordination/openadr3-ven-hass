@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
+## [0.4.4] — 2026-05-26
+
+### Fixed
+
+- Three event-loop blocking-call warnings surfaced by Home Assistant 2026.5's stricter enforcement. None are user-visible failures today, but HA explicitly asks for bug reports for each. Fixed all three in one release:
+  - `httpx.AsyncClient()` in `api_client.py` loaded the certifi CA bundle synchronously during `async_setup_entry`. Now constructed via `hass.async_add_executor_job`.
+  - `start_local.format("YYYY-MM-DD")` in `coordinator._process_event` lazy-imported `pendulum.locales.en.locale` from inside the polling loop. Switched to stdlib `strftime("%Y-%m-%d")` — pendulum's locale machinery isn't needed for a fixed ISO date format.
+  - `paho.mqtt.Client.tls_set()` in `MqttSubscriptionManager.__init__` loaded the system trust store. Moved into `start()`, which is already awaited from an executor by the coordinator.
+
 ## [0.4.3] — 2026-05-26
 
 ### Fixed

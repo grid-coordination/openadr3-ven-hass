@@ -54,16 +54,21 @@ class MqttSubscriptionManager:
             client_id=client_id,
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
         )
-        if self._use_tls:
-            self._client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
-
+        # tls_set() is deferred to start() — it loads the system trust store,
+        # which blocks the event loop if called from __init__.
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
         self._connected = False
 
     def start(self) -> None:
-        """Connect to broker and start the network loop."""
+        """Connect to broker and start the network loop.
+
+        Must run in an executor — tls_set() loads system trust and connect()
+        does blocking I/O.
+        """
+        if self._use_tls:
+            self._client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
         _LOGGER.info(
             "Connecting to MQTT broker at %s:%s (TLS=%s)",
             self._host, self._port, self._use_tls,

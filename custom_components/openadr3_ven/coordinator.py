@@ -96,7 +96,9 @@ def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
             )
             start_local = ip.start.in_timezone(local_tz_key)
             row_base = {
-                "date": start_local.format("YYYY-MM-DD"),
+                # strftime, not pendulum's format(), to avoid lazy-importing
+                # pendulum.locales.<locale> inside the HA event loop.
+                "date": start_local.strftime("%Y-%m-%d"),
                 "hour": start_local.hour,
                 "minute": start_local.minute,
                 "interval_minutes": duration_minutes,
