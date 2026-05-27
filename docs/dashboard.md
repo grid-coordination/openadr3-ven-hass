@@ -19,6 +19,39 @@ Instead, the forecast is returned by a service call: `openadr3_ven.get_forecast`
 
 If you are upgrading from 0.3.x and have dashboards using `entity.attributes.forecast`, replace those `data_generator` blocks with the service-call version below.
 
+## Quick verification (no dashboard wiring required)
+
+Before wiring up any Lovelace cards, you can confirm in 30 seconds that the forecast data is reaching Home Assistant. This is the fastest way to answer the question "where did my forecast attribute go?" after upgrading from 0.3.x.
+
+1. **Developer Tools → Actions**
+2. In the action picker, choose **Get forecast** (`openadr3_ven.get_forecast`)
+3. Under **Targets → Entities**, pick any sensor created by this integration (e.g. `sensor.openadr3_vtn_..._price`)
+4. Leave **Start** and **End** unchecked to get the full forecast horizon
+5. Click **Perform action**
+
+The **Response** panel renders the returned YAML:
+
+```yaml
+sensor.openadr3_vtn_..._price:
+  payload_type: PRICE
+  unit: $/kWh
+  forecast:
+    - datetime: "2026-05-26T12:20:00+10:00"
+      value: 0.151608
+      interval_minutes: 5      # PT5M live tick
+    - datetime: "2026-05-26T12:30:00+10:00"
+      value: 0.157163
+      interval_minutes: 30     # PT30M forecast slot
+    - datetime: "2026-05-26T13:00:00+10:00"
+      value: 0.157163
+      interval_minutes: 30
+    # ...
+```
+
+If you see a `forecast:` array with `datetime` / `value` / `interval_minutes` rows, the data is alive — the `data_generator` recipe below just renders this same response in a chart. If the response is empty, the integration hasn't fetched any forecast yet from the VTN (most often: the coordinator's first refresh hasn't completed; restart HA or wait for the next poll cycle).
+
+> Verification recipe contributed by [@purcell-lab](https://github.com/purcell-lab) in [issue #10](https://github.com/grid-coordination/openadr3-ven-hass/issues/10) — much friendlier than diving straight into apexcharts wiring.
+
 ## Dashboard Layout
 
 The recommended layout uses a **Sections** view with one section per (program, payload type) pair. Each section pairs a Mushroom entity card (current value at a glance) with an ApexCharts forecast chart.
@@ -146,17 +179,6 @@ apex_config:
 Replace the `entity` values with your actual sensor entity IDs. Each program publishes one sensor per OpenADR 3 payload type — find them in **Settings → Devices & Services → OpenADR 3 VEN** → click the device. A program that publishes both PRICE and EXPORT_PRICE creates two sensors with `_price` and `_export_price` suffixes on the entity ID.
 
 The same `data_generator` recipe works for any sensor created by this integration. The service returns the full forecast at whatever native granularity the VTN publishes (PT5M, PT30M, PT1H — the chart's stepline curve renders correctly at any cadence).
-
-## Testing the service directly
-
-You can verify the service works without building a dashboard first:
-
-1. **Developer Tools → Services**
-2. Service: `openadr3_ven.get_forecast`
-3. Target: pick a sensor
-4. Call Service
-
-The response panel shows the returned forecast, including `payload_type`, `unit`, and the `forecast` array of `{ datetime, value, interval_minutes }` rows.
 
 ## Result
 

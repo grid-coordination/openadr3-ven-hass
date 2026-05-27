@@ -114,7 +114,7 @@ Upgrade directly to **0.4.1 or later** (0.4.0 had a payload-type case-mismatch b
 
 0.4.x is a **breaking change** for existing dashboards. Two things change:
 
-1. **Forecast moved from entity attribute to service call.** Lovelace cards using `data_generator: entity.attributes.forecast` will return empty arrays. Replace them with the service-call recipe in [docs/dashboard.md](docs/dashboard.md).
+1. **Forecast moved from entity attribute to service call.** Lovelace cards using `data_generator: entity.attributes.forecast` will return empty arrays. Before touching any cards, verify your forecast data is alive in 30 seconds via [**Developer Tools → Actions** → `openadr3_ven.get_forecast`](docs/dashboard.md#quick-verification-no-dashboard-wiring-required); then replace the card `data_generator` blocks with the service-call recipe in [docs/dashboard.md](docs/dashboard.md).
 2. **One sensor per payload type per program.** A program that previously created a single `sensor.openadr3_vtn_<program>` sensor for its first payload type now creates one sensor per type (e.g. `..._price`, `..._export_price`). The existing entity is migrated in place — its history and unique_id survive — but additional payload types appear as new entities, and the display name gains a payload-type suffix (e.g. `EELEC-024131103` → `EELEC-024131103 Price`).
 
 Sensor states and the small attribute surface (`daily_min`, `daily_max`, `current_interval_start`, etc.) keep working through the upgrade without intervention. The config-entry migration runs automatically on first restart.
