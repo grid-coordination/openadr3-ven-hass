@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
+## [0.4.7] — 2026-05-28
+
+### Fixed
+
+- `get_notifiers` no longer crashes `async_setup_entry` when the VTN is transiently unreachable at HA startup. Previously the try/except only caught `httpx.HTTPStatusError` (4xx/5xx responses), so network failures like `httpx.ConnectError` / `httpx.ReadTimeout` propagated up through `coordinator.async_start_mqtt` → `async_setup_entry` and bricked the entry until manual reload (HA doesn't auto-retry). MQTT discovery is non-critical — we fall back to HTTP polling either way — so the catch is now broadened to `httpx.HTTPError` (the parent class) and any failure logs at debug and returns `{}`, the same path used for VTNs that don't advertise MQTT at all. Surfaced when a fly.io cold-start blip on Mark Purcell's AU VTN caused a TLS handshake failure during a routine HA Core restart ([#15](https://github.com/grid-coordination/openadr3-ven-hass/issues/15)).
+
+### Added
+
+- `tests/test_api_client.py` covers the broadened catch: `get_notifiers` returns `{}` on `HTTPStatusError`, `ConnectError`, `ReadTimeout`, and `RemoteProtocolError`, and still returns the parsed JSON on success. Loads `api_client.py` directly via importlib so the test suite stays HA-stub-free for this module.
+
 ## [0.4.6] — 2026-05-28
 
 ### Fixed

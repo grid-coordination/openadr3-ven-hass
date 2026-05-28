@@ -108,12 +108,22 @@ class VtnApiClient:
         return [Event.from_raw(e) for e in resp.json()]
 
     async def get_notifiers(self) -> dict[str, Any]:
-        """Fetch notifier configuration (MQTT broker details, etc)."""
+        """Fetch notifier configuration (MQTT broker details, etc).
+
+        Returns {} on any HTTP error (4xx/5xx, connect refused, TLS handshake,
+        timeout, etc.). MQTT discovery is non-critical — if it fails we fall
+        through to HTTP polling, same path as a VTN that doesn't advertise
+        MQTT. A transient network blip at startup must not brick the entry.
+        """
         try:
             resp = await self._client.get("/notifiers")
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPStatusError:
+        except httpx.HTTPError as err:
+            _LOGGER.debug(
+                "MQTT notifier discovery failed (%s); treating as no-MQTT",
+                err,
+            )
             return {}
 
     async def get_program_event_topics(self, program_id: str) -> list[str]:
