@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
+## [0.4.5] — 2026-05-28
+
+### Fixed
+
+- Spec-mandated `intervalPeriod` inheritance now applied in `coordinator._process_event`. Per OpenADR 3.1.0, `event.intervalPeriod` "sets default start time and duration of intervals" and per-interval `intervalPeriod` "may override event.intervalPeriod". The previous code only read per-interval and hardcoded `interval_minutes: 60` when absent. Now field-by-field: missing `duration` inherits from event-level; missing `start` chains sequentially from the previous resolved interval's end (or event-level `start` for the first inheriting interval). Publishers that set per-interval `intervalPeriod` explicitly on every interval — like the [California price server](https://price.grid-coordination.energy) and Mark Purcell's [AU VTN](https://openleadr-vtn-au.fly.dev) — see no behavior change ([#13](https://github.com/grid-coordination/openadr3-ven-hass/issues/13)).
+- `config_flow.py:50` test-connection path constructed `VtnApiClient(...)` synchronously, triggering the same blocking-call warning we addressed in 0.4.4 for `async_setup_entry`. Now wrapped in `hass.async_add_executor_job`. Surfaced during cross-VEN testing while reproducing #11.
+
+### Added
+
+- First test file: `tests/test_coordinator.py` covers `_process_event` inheritance combinatorics (explicit passthrough, full inheritance with sequential start chaining, partial-field inheritance, explicit-then-inheriting chaining, legacy hour-of-day fallback, plus a regression anchor for the AU VTN's mixed PT5M + PT30M shape). Run with `python3 -m unittest discover tests/`. No CI hookup yet; runnable locally.
+
 ## [0.4.4] — 2026-05-26
 
 ### Fixed

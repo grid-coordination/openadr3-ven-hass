@@ -47,7 +47,9 @@ class OpenADR3VENConfigFlow(ConfigFlow, domain=DOMAIN):
 
             self._async_abort_entries_match({CONF_VTN_URL: self._vtn_url})
 
-            client = VtnApiClient(self._vtn_url)
+            client = await self.hass.async_add_executor_job(
+                VtnApiClient, self._vtn_url
+            )
             try:
                 programs = await client.get_all_programs()
             except (httpx.HTTPError, httpx.TimeoutException):

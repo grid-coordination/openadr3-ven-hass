@@ -74,8 +74,15 @@ def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
     intervals (e.g. PRICE + EXPORT_PRICE + RRP) fan out into separate streams,
     one per payload type.
 
-    Falls back to interval.id as hour-of-day at PT1H when intervalPeriod is
-    absent — legacy path for VTNs that don't populate per-interval timing.
+    intervalPeriod resolution follows OpenADR 3.1.0:
+      - event.intervalPeriod sets default start and duration for intervals
+      - per-interval intervalPeriod overrides those defaults field-by-field
+      - when several adjacent intervals inherit `start`, they continue
+        sequentially from where the previous resolved interval ended
+
+    Falls back to interval.id as hour-of-day at PT1H only when neither
+    per-interval nor event-level intervalPeriod can resolve start+duration —
+    legacy path for VTNs that populate neither.
     """
     if not event.intervals:
         return {}
@@ -83,18 +90,44 @@ def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
     fallback_date = _extract_date(event.event_name)
     source_event = event.event_name
     local_tz_key = dt_util.DEFAULT_TIME_ZONE.key
+    event_ip = event.interval_period
     by_type: dict[str, list[dict[str, Any]]] = {}
+    prior_resolved_end = None  # end of previous fully-resolved interval
 
     for interval in event.intervals:
         if not interval.payloads:
             continue
 
         ip = interval.interval_period
-        if ip is not None and ip.start is not None and ip.duration is not None:
+
+        if ip is not None and ip.duration is not None:
+            resolved_duration = ip.duration
+        elif event_ip is not None and event_ip.duration is not None:
+            resolved_duration = event_ip.duration
+        else:
+            resolved_duration = None
+
+        if ip is not None and ip.start is not None:
+            resolved_start = ip.start
+        elif prior_resolved_end is not None:
+            resolved_start = prior_resolved_end
+        elif event_ip is not None and event_ip.start is not None:
+            resolved_start = event_ip.start
+        else:
+            resolved_start = None
+
+        if resolved_start is not None and resolved_duration is not None:
+            if ip is None or ip.start is None or ip.duration is None:
+                _LOGGER.debug(
+                    "Inheriting intervalPeriod for event %s interval id=%s: "
+                    "start=%s duration=%s",
+                    event.event_name, interval.id,
+                    resolved_start, resolved_duration,
+                )
             duration_minutes = max(
-                1, int(round(ip.duration.total_seconds() / 60))
+                1, int(round(resolved_duration.total_seconds() / 60))
             )
-            start_local = ip.start.in_timezone(local_tz_key)
+            start_local = resolved_start.in_timezone(local_tz_key)
             row_base = {
                 # strftime, not pendulum's format(), to avoid lazy-importing
                 # pendulum.locales.<locale> inside the HA event loop.
@@ -104,6 +137,7 @@ def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
                 "interval_minutes": duration_minutes,
                 "datetime": start_local.to_iso8601_string(),
             }
+            prior_resolved_end = resolved_start + resolved_duration
         else:
             row_base = {
                 "hour": interval.id,
@@ -113,6 +147,7 @@ def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
             if fallback_date:
                 row_base["date"] = fallback_date
                 row_base["datetime"] = f"{fallback_date}T{interval.id:02d}:00:00"
+            prior_resolved_end = None
 
         for payload in interval.payloads:
             # The openadr3 lib's coerce_payload lowercases payload.type. The OA3
