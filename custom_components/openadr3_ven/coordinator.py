@@ -533,6 +533,19 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
                     )
                 continue
 
+            if not events and self.data and program_id in self.data:
+                # Publishers that DELETE-then-POST events leave a brief window
+                # where GET /events returns []. Treat an empty success the same
+                # way we treat a failed fetch: keep the last-known forecast so
+                # the sensor doesn't flip to `unknown` on every publish cycle.
+                _LOGGER.debug(
+                    "VTN returned no events for program %s; preserving "
+                    "last-known data",
+                    program_name,
+                )
+                data[program_id] = self.data[program_id]
+                continue
+
             data[program_id] = _build_program_data(
                 program_id, program_name, payload_types, events
             )

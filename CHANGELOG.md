@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
+## [0.4.6] — 2026-05-28
+
+### Fixed
+
+- Sensors no longer flip to `unknown` when the VTN momentarily returns an empty event list. `_async_update_data` already preserved the last-known data when `client.get_events()` raised an exception, but treated an HTTP-200 empty-success response as a reason to rebuild the program with empty forecast rows. Publishers that DELETE-then-POST events (rather than PATCHing in place) leave a brief window where `GET /events?programID=...` returns `[]` — observed directly while watching Mark Purcell's AU VTN. The fallback now extends to the empty-success case ([#14](https://github.com/grid-coordination/openadr3-ven-hass/issues/14)).
+
+### Added
+
+- `tests/test_coordinator.py` grows two `_async_update_data` cases: preserves stale data on empty-success when prior data exists; cold-start with empty-success still seeds a valid empty ProgramData. Plus a regression-guard test that non-empty results properly replace stale data (no over-preservation).
+
 ## [0.4.5] — 2026-05-28
 
 ### Fixed

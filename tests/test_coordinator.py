@@ -272,5 +272,118 @@ class ProcessEventTests(unittest.TestCase):
         self.assertEqual([r["value"] for r in rows], [0.219234, 0.249057, 0.229169])
 
 
+class AsyncUpdateDataEmptyResultTests(unittest.TestCase):
+    """`_async_update_data` should preserve last-known data when the VTN
+    returns an empty event list — the same way it does for thrown exceptions.
+
+    Repros publisher-side behavior like the AU openleadr-vtn-au.fly.dev
+    bridge, which deletes-then-creates events on each publish cycle and
+    leaves a brief window where `GET /events?programID=...` returns [].
+    """
+
+    def _make_coordinator(self, *, current_data, get_events_returns):
+        from unittest.mock import AsyncMock, MagicMock
+
+        coord_class = _coord.OpenADR3Coordinator
+        coord = coord_class.__new__(coord_class)  # bypass __init__
+        coord.data = current_data
+        coord.config_entry = MagicMock()
+        coord.config_entry.data = {
+            _coord.CONF_PROGRAMS: [
+                {"id": "prog-1", "name": "Test Program", "payload_types": ["PRICE"]},
+            ],
+        }
+        coord.client = MagicMock()
+        coord.client.get_events = AsyncMock(return_value=get_events_returns)
+        coord._reconfigure_polling = MagicMock()
+        return coord
+
+    def _stale_program_data(self):
+        return _coord.ProgramData(
+            program_id="prog-1",
+            program_name="Test Program",
+            event_names=["ev-stale"],
+            payloads={
+                "PRICE": _coord.PayloadData(
+                    payload_type="PRICE",
+                    forecast=[{
+                        "datetime": "2026-05-28T10:00:00+00:00",
+                        "value": 1.23,
+                        "interval_minutes": 30,
+                        "hour": 10,
+                        "minute": 0,
+                        "date": "2026-05-28",
+                    }],
+                ),
+            },
+        )
+
+    def test_empty_result_preserves_stale_data(self):
+        import asyncio
+
+        stale = self._stale_program_data()
+        coord = self._make_coordinator(
+            current_data={"prog-1": stale},
+            get_events_returns=[],
+        )
+        result = asyncio.run(coord._async_update_data())
+        self.assertIs(result["prog-1"], stale)
+        self.assertEqual(result["prog-1"].payloads["PRICE"].forecast[0]["value"], 1.23)
+
+    def test_empty_result_no_prior_data_seeds_empty_forecast(self):
+        """Cold-start with an empty event list (no prior data to preserve) should
+        seed an empty-but-valid ProgramData rather than crash or raise."""
+        import asyncio
+
+        coord = self._make_coordinator(
+            current_data=None,
+            get_events_returns=[],
+        )
+        result = asyncio.run(coord._async_update_data())
+        self.assertIn("prog-1", result)
+        self.assertEqual(result["prog-1"].payloads["PRICE"].forecast, [])
+
+    def test_non_empty_result_rebuilds_from_fresh_events(self):
+        """When events are present, prior data is replaced (no over-preservation)."""
+        import asyncio
+
+        stale = self._stale_program_data()
+        coord = self._make_coordinator(
+            current_data={"prog-1": stale},
+            get_events_returns=[{
+                "id": "fresh-event",
+                "createdDateTime": "2026-05-28T13:00:00+00:00",
+                "modificationDateTime": "2026-05-28T13:00:00+00:00",
+                "objectType": "EVENT",
+                "programID": "prog-1",
+                "eventName": "fresh-event-2026-05-28",
+                "intervalPeriod": {
+                    "start": "2026-05-28T13:00:00+00:00",
+                    "duration": "PT30M",
+                },
+                "intervals": [
+                    {
+                        "id": 0,
+                        "intervalPeriod": {
+                            "start": "2026-05-28T13:00:00+00:00",
+                            "duration": "PT30M",
+                        },
+                        "payloads": [{"type": "PRICE", "values": [9.99]}],
+                    },
+                ],
+            }],
+        )
+        # Wrap raw dict in Event before passing in — get_events returns coerced
+        from openadr3 import Event
+        coord.client.get_events.return_value = [
+            Event.from_raw(coord.client.get_events.return_value[0])
+        ]
+        result = asyncio.run(coord._async_update_data())
+        self.assertIsNot(result["prog-1"], stale)
+        rows = result["prog-1"].payloads["PRICE"].forecast
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["value"], 9.99)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
