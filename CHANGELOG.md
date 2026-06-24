@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
-## [Unreleased]
+## [0.4.8] — 2026-06-24
 
 ### Changed
 
