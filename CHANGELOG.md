@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
+## [Unreleased]
+
+### Changed
+
+- Accepted into the [HACS default repository](https://github.com/hacs/default) ([hacs/default#7126](https://github.com/hacs/default/pull/7126)). Users can now install directly from HACS without adding a custom repository. README updated to drop the custom-repository instructions and add the HACS Default badge.
+
 ## [0.4.7] — 2026-05-28
 
 ### Fixed

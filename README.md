@@ -1,5 +1,6 @@
 # OpenADR 3 VEN for Home Assistant
 
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/default)
 [![HACS Validation](https://github.com/grid-coordination/openadr3-ven-hass/actions/workflows/hacs.yml/badge.svg)](https://github.com/grid-coordination/openadr3-ven-hass/actions/workflows/hacs.yml)
 [![Hassfest Validation](https://github.com/grid-coordination/openadr3-ven-hass/actions/workflows/hassfest.yml/badge.svg)](https://github.com/grid-coordination/openadr3-ven-hass/actions/workflows/hassfest.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/grid-coordination/openadr3-ven-hass)](https://github.com/grid-coordination/openadr3-ven-hass/releases)
@@ -23,24 +24,17 @@ A Home Assistant custom integration that acts as an [OpenADR 3](https://www.open
 
 ### HACS (recommended)
 
-> [!NOTE]
-> **Early access — not yet in the HACS default repository.**
-> Until this integration is listed in HACS, add it as a custom repository first.
->
-> **One-click via [My Home Assistant](https://my.home-assistant.io/):**
->
-> [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=grid-coordination&repository=openadr3-ven-hass&category=integration)
->
-> **Or add manually:**
-> 1. In HACS, go to **Integrations** → three-dot menu (⋮) → **Custom repositories**
-> 2. Enter `https://github.com/grid-coordination/openadr3-ven-hass` and select category **Integration**
-> 3. Click **Add**
->
-> After that, proceed with the standard install below.
+This integration is available in the [HACS](https://hacs.xyz/) default repository — no custom repository needed.
+
+**One-click via [My Home Assistant](https://my.home-assistant.io/):**
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=grid-coordination&repository=openadr3-ven-hass&category=integration)
+
+**Or install manually:**
 
 1. Open HACS in your Home Assistant instance
-2. Go to **Integrations** → search for **OpenADR 3 VEN**
-3. Click **Install**
+2. Search for **OpenADR 3 VEN**
+3. Click **Download**
 4. **Restart Home Assistant**
 
 ### Manual
