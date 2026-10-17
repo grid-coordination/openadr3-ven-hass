@@ -34,7 +34,7 @@ The **Response** panel renders the returned YAML:
 ```yaml
 sensor.openadr3_vtn_..._price:
   payload_type: PRICE
-  unit: $/kWh
+  unit: AUD/kWh
   forecast:
     - datetime: "2026-05-26T12:20:00+10:00"
       value: 0.151608
@@ -71,7 +71,7 @@ The recommended layout uses a **Sections** view with one section per (program, p
 type: custom:mushroom-entity-card
 entity: sensor.openadr3_vtn_au_nsw1_ausgrid_ea025_price
 name: Price
-icon: mdi:currency-usd
+icon: mdi:cash
 ```
 
 #### Price Forecast (ApexCharts Card)
@@ -110,7 +110,7 @@ series:
 yaxis:
   - apex_config:
       title:
-        text: "$/kWh"
+        text: "AUD/kWh"
 apex_config:
   chart:
     height: 300

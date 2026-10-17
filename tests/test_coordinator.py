@@ -295,6 +295,8 @@ class AsyncUpdateDataEmptyResultTests(unittest.TestCase):
         }
         coord.client = MagicMock()
         coord.client.get_events = AsyncMock(return_value=get_events_returns)
+        coord.client.get_all_programs = AsyncMock(return_value=[])
+        coord._program_descriptors = None
         coord._reconfigure_polling = MagicMock()
         return coord
 
@@ -342,6 +344,15 @@ class AsyncUpdateDataEmptyResultTests(unittest.TestCase):
         result = asyncio.run(coord._async_update_data())
         self.assertIn("prog-1", result)
         self.assertEqual(result["prog-1"].payloads["PRICE"].forecast, [])
+
+    def test_program_descriptor_fetch_failure_fails_the_refresh(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        coord = self._make_coordinator(current_data=None, get_events_returns=[])
+        coord.client.get_all_programs = AsyncMock(side_effect=OSError("down"))
+        with self.assertRaisesRegex(_coord.UpdateFailed, "payload descriptors"):
+            asyncio.run(coord._async_update_data())
 
     def test_non_empty_result_rebuilds_from_fresh_events(self):
         """When events are present, prior data is replaced (no over-preservation)."""
@@ -453,6 +464,66 @@ class NamelessEventTests(unittest.TestCase):
         new_data = coord.hass.loop.call_soon_threadsafe.call_args_list[0].args[1]
         rows = new_data["prog-1"].payloads["PRICE"].forecast
         self.assertEqual([r["value"] for r in rows], [2.0])
+
+
+class DescriptorTests(unittest.TestCase):
+    """Payload descriptors (currency, units) reach ProgramData."""
+
+    def test_event_descriptor_overrides_program_descriptor(self):
+        ev = Event.from_raw({
+            "id": "ev-1",
+            "objectType": "EVENT",
+            "programID": "prog-1",
+            "payloadDescriptors": [
+                {"payloadType": "PRICE", "units": "KWH", "currency": "EUR"},
+            ],
+            "intervals": [],
+        })
+        prog_desc = {
+            "PRICE": _coord.PayloadDescriptor(units="KWH", currency="USD"),
+            "GHG": _coord.PayloadDescriptor(units="KWH"),
+        }
+        prog = _coord._build_program_data(
+            "prog-1", "P", ["PRICE"], [ev], prog_desc
+        )
+        self.assertEqual(prog.descriptors["PRICE"].currency, "EUR")
+        self.assertIn("GHG", prog.descriptors)
+
+    def test_event_descriptor_without_currency_keeps_program_currency(self):
+        ev = Event.from_raw({
+            "id": "ev-1",
+            "objectType": "EVENT",
+            "programID": "prog-1",
+            "payloadDescriptors": [{"payloadType": "PRICE", "units": "MWH"}],
+            "intervals": [],
+        })
+        prog_desc = {"PRICE": _coord.PayloadDescriptor(units="KWH", currency="EUR")}
+        prog = _coord._build_program_data(
+            "prog-1", "P", ["PRICE"], [ev], prog_desc
+        )
+        self.assertEqual(
+            prog.descriptors["PRICE"],
+            _coord.PayloadDescriptor(units="MWH", currency="EUR"),
+        )
+
+    def test_report_descriptors_are_ignored(self):
+        from openadr3 import Program
+
+        p = Program.from_raw({
+            "id": "prog-1",
+            "objectType": "PROGRAM",
+            "programName": "P",
+            "payloadDescriptors": [
+                {"objectType": "EVENT_PAYLOAD_DESCRIPTOR", "payloadType": "PRICE",
+                 "units": "KWH", "currency": "AUD"},
+                {"objectType": "REPORT_PAYLOAD_DESCRIPTOR", "payloadType": "USAGE",
+                 "units": "KWH"},
+            ],
+        })
+        self.assertEqual(
+            _coord._descriptors_from(p.payload_descriptors),
+            {"PRICE": _coord.PayloadDescriptor(units="KWH", currency="AUD")},
+        )
 
 
 if __name__ == "__main__":

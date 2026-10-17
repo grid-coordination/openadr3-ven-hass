@@ -21,27 +21,16 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_PROGRAMS, CONF_VTN_NAME, DOMAIN
 from .coordinator import OpenADR3Coordinator, PayloadData, ProgramData
+from .units import PayloadDescriptor, is_price, unit_of_measurement
 
 SERVICE_GET_FORECAST = "get_forecast"
 
-# Per-payload-type display config. Unknown types fall through to a generic icon
-# with the payload type as the unit string.
-_PAYLOAD_UI: dict[str, dict[str, Any]] = {
-    "PRICE": {
-        "unit": "$/kWh",
-        "icon": "mdi:currency-usd",
-        "precision": 5,
-    },
-    "EXPORT_PRICE": {
-        "unit": "$/kWh",
-        "icon": "mdi:transmission-tower-export",
-        "precision": 5,
-    },
-    "GHG": {
-        "unit": "g CO₂/kWh",
-        "icon": "mdi:molecule-co2",
-        "precision": 1,
-    },
+# Per-payload-type icons. Other price types use mdi:cash, the rest mdi:flash.
+# Units come from the VTN's payload descriptors (see units.py).
+_ICONS: dict[str, str] = {
+    "PRICE": "mdi:cash",
+    "EXPORT_PRICE": "mdi:transmission-tower-export",
+    "GHG": "mdi:molecule-co2",
 }
 
 
@@ -110,15 +99,32 @@ class OpenADR3ProgramSensor(CoordinatorEntity[OpenADR3Coordinator], SensorEntity
             f"{self._program_name} {_pretty_payload_type(payload_type)}"
         )
 
-        ui = _PAYLOAD_UI.get(payload_type)
-        if ui is not None:
-            self._attr_native_unit_of_measurement = ui["unit"]
-            self._attr_icon = ui["icon"]
-            if "precision" in ui:
-                self._attr_suggested_display_precision = ui["precision"]
-        else:
-            self._attr_native_unit_of_measurement = payload_type
-            self._attr_icon = "mdi:flash"
+    def _descriptor(self) -> PayloadDescriptor | None:
+        program = self._program()
+        return program.descriptors.get(self._payload_type) if program else None
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        """Unit from the VTN's payload descriptor, e.g. "EUR/kWh"."""
+        return unit_of_measurement(
+            self._payload_type, self._descriptor(), self.hass.config.currency
+        )
+
+    @property
+    def icon(self) -> str:
+        if self._payload_type in _ICONS:
+            return _ICONS[self._payload_type]
+        if is_price(self._payload_type, self._descriptor()):
+            return "mdi:cash"
+        return "mdi:flash"
+
+    @property
+    def suggested_display_precision(self) -> int | None:
+        if is_price(self._payload_type, self._descriptor()):
+            return 5
+        if self._payload_type == "GHG":
+            return 1
+        return None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -238,7 +244,7 @@ class OpenADR3ProgramSensor(CoordinatorEntity[OpenADR3Coordinator], SensorEntity
         if data is None:
             return {
                 "payload_type": self._payload_type,
-                "unit": self._attr_native_unit_of_measurement,
+                "unit": self.native_unit_of_measurement,
                 "forecast": [],
             }
 
@@ -261,7 +267,7 @@ class OpenADR3ProgramSensor(CoordinatorEntity[OpenADR3Coordinator], SensorEntity
 
         return {
             "payload_type": data.payload_type,
-            "unit": self._attr_native_unit_of_measurement,
+            "unit": self.native_unit_of_measurement,
             "forecast": [
                 {
                     "datetime": r.get("datetime"),

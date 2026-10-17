@@ -20,6 +20,7 @@ from openadr3 import Event
 from .api_client import VtnApiClient
 from .const import CONF_PROGRAMS, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .mqtt_client import MqttSubscriptionManager, pick_broker_uri
+from .units import PayloadDescriptor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +56,41 @@ class ProgramData:
     program_name: str
     event_names: list[str] = field(default_factory=list)
     payloads: dict[str, PayloadData] = field(default_factory=dict)
+    # Keyed by payload type: program-level descriptors overlaid by any the
+    # events carry.
+    descriptors: dict[str, PayloadDescriptor] = field(default_factory=dict)
+
+
+def _descriptors_from(
+    payload_descriptors: list[Any] | None,
+) -> dict[str, PayloadDescriptor]:
+    """Map EVENT_PAYLOAD_DESCRIPTORs by upper-cased payload type."""
+    out: dict[str, PayloadDescriptor] = {}
+    for pd in payload_descriptors or []:
+        if getattr(pd, "object_type", None) == "REPORT_PAYLOAD_DESCRIPTOR":
+            continue
+        ptype = (pd.payload_type or "").upper()
+        if ptype:
+            out[ptype] = PayloadDescriptor(
+                units=getattr(pd, "units", None),
+                currency=getattr(pd, "currency", None),
+            )
+    return out
+
+
+def _overlay_descriptors(
+    base: dict[str, PayloadDescriptor],
+    overlay: dict[str, PayloadDescriptor],
+) -> dict[str, PayloadDescriptor]:
+    """Overlay descriptors field by field: an omitted field keeps the base value."""
+    out = dict(base)
+    for ptype, d in overlay.items():
+        b = out.get(ptype, PayloadDescriptor())
+        out[ptype] = PayloadDescriptor(
+            units=d.units or b.units,
+            currency=d.currency or b.currency,
+        )
+    return out
 
 
 def _extract_date(event_name: str | None) -> str | None:
@@ -219,6 +255,7 @@ def _build_program_data(
     program_name: str,
     payload_types: list[str],
     events: list[Event],
+    program_descriptors: dict[str, PayloadDescriptor] | None = None,
 ) -> ProgramData:
     """Process all events for a program into a ProgramData."""
     today_str = dt_util.now().strftime("%Y-%m-%d")
@@ -229,8 +266,12 @@ def _build_program_data(
         pt: [] for pt in payload_types
     }
     event_names: list[str] = []
+    descriptors = dict(program_descriptors or {})
 
     for event in events:
+        descriptors = _overlay_descriptors(
+            descriptors, _descriptors_from(event.payload_descriptors)
+        )
         for ptype, rows in _process_event(event).items():
             by_type_forecast.setdefault(ptype, []).extend(rows)
         if event.event_name:
@@ -254,6 +295,7 @@ def _build_program_data(
         program_name=program_name,
         event_names=event_names,
         payloads=payloads,
+        descriptors=descriptors,
     )
 
 
@@ -282,6 +324,8 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
         # Cadence we last applied; lets _reconfigure_polling skip work when
         # nothing changed.
         self._applied_cadence_minutes: int | None = None
+        # Program-level payload descriptors by program id; None until fetched.
+        self._program_descriptors: dict[str, dict[str, PayloadDescriptor]] | None = None
 
     @staticmethod
     def _boundary_minutes(interval_min: int) -> list[int]:
@@ -498,21 +542,48 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
             event_names.append(event_name)
             event_names.sort()
 
+        descriptors = existing.descriptors
+        if operation != "DELETE":
+            descriptors = _overlay_descriptors(
+                descriptors, _descriptors_from(event.payload_descriptors)
+            )
+
         updated_program = ProgramData(
             program_id=program_id,
             program_name=existing.program_name,
             event_names=event_names,
             payloads=new_payloads,
+            descriptors=descriptors,
         )
 
         new_data = {**self.data, program_id: updated_program}
         self.hass.loop.call_soon_threadsafe(self.async_set_updated_data, new_data)
         self.hass.loop.call_soon_threadsafe(self._reconfigure_polling, new_data)
 
+    async def _async_fetch_program_descriptors(self) -> None:
+        """Fetch program payload descriptors once.
+
+        A failure fails the refresh rather than publishing values in a fallback
+        unit that would change once the descriptors arrive.
+        """
+        if self._program_descriptors is not None:
+            return
+        try:
+            programs = await self.client.get_all_programs()
+        except Exception as err:
+            raise UpdateFailed(
+                f"Failed to fetch program payload descriptors: {err}"
+            ) from err
+        self._program_descriptors = {
+            p.id: _descriptors_from(p.payload_descriptors) for p in programs
+        }
+
     async def _async_update_data(self) -> dict[str, ProgramData]:
         """Fetch events for all subscribed programs."""
         programs_config = self.config_entry.data[CONF_PROGRAMS]
         data: dict[str, ProgramData] = {}
+        await self._async_fetch_program_descriptors()
+        program_descriptors = self._program_descriptors
 
         for prog in programs_config:
             program_id = prog["id"]
@@ -537,6 +608,7 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
                             pt: PayloadData(payload_type=pt)
                             for pt in payload_types
                         },
+                        descriptors=program_descriptors.get(program_id, {}),
                     )
                 continue
 
@@ -554,7 +626,8 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
                 continue
 
             data[program_id] = _build_program_data(
-                program_id, program_name, payload_types, events
+                program_id, program_name, payload_types, events,
+                program_descriptors.get(program_id),
             )
 
         if not data:

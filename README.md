@@ -81,7 +81,7 @@ The response (per entity) is:
 
 ```yaml
 payload_type: PRICE
-unit: $/kWh
+unit: AUD/kWh
 forecast:
   - datetime: "2026-05-25T17:05:00+10:00"
     value: 0.171915
