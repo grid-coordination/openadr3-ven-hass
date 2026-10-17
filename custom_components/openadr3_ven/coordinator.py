@@ -65,6 +65,15 @@ def _extract_date(event_name: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+def _event_key(event: Event) -> str | None:
+    """Identity used to replace or drop an event's rows on MQTT updates.
+
+    The VTN-assigned id, falling back to eventName; eventName is optional in
+    OA3 and need not be unique.
+    """
+    return event.id or event.event_name
+
+
 def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
     """Expand an event into per-payload-type row streams at native granularity.
 
@@ -89,6 +98,7 @@ def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
 
     fallback_date = _extract_date(event.event_name)
     source_event = event.event_name
+    event_key = _event_key(event)
     local_tz_key = dt_util.DEFAULT_TIME_ZONE.key
     event_ip = event.interval_period
     by_type: dict[str, list[dict[str, Any]]] = {}
@@ -164,6 +174,7 @@ def _process_event(event: Event) -> dict[str, list[dict[str, Any]]]:
                 "value": value,
                 "payload_type": ptype,
                 "source_event": source_event,
+                "event_key": event_key,
             })
 
     for rows in by_type.values():
@@ -212,11 +223,6 @@ def _build_program_data(
     """Process all events for a program into a ProgramData."""
     today_str = dt_util.now().strftime("%Y-%m-%d")
 
-    dated_events = sorted(
-        [e for e in events if e.event_name],
-        key=lambda e: e.event_name,
-    )
-
     # Seed with the configured payload types so an entity always exists even
     # if the VTN hasn't published any matching events yet.
     by_type_forecast: dict[str, list[dict[str, Any]]] = {
@@ -224,10 +230,12 @@ def _build_program_data(
     }
     event_names: list[str] = []
 
-    for event in dated_events:
+    for event in events:
         for ptype, rows in _process_event(event).items():
             by_type_forecast.setdefault(ptype, []).extend(rows)
-        event_names.append(event.event_name or "")
+        if event.event_name:
+            event_names.append(event.event_name)
+    event_names.sort()
 
     payloads: dict[str, PayloadData] = {}
     for ptype, forecast in by_type_forecast.items():
@@ -444,10 +452,8 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
           CREATE/UPDATE/READ → drop prior rows from this event and re-emit from the new payload.
           DELETE             → drop prior rows from this event and forget its name.
 
-        Dedup is keyed on the OA3 event name (`source_event`), not on a parsed
-        date suffix. The previous date-suffix approach silently failed for VTNs
-        whose event names don't carry a date — rows accumulated forever on
-        repeated MQTT updates because the filter matched nothing to remove.
+        Dedup is keyed on the event id (`event_key`, see _event_key), not on
+        eventName: eventName is optional and need not be unique (GH#16).
         """
         program_id = event.program_id
         if self.data is None or program_id not in self.data:
@@ -455,6 +461,7 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
 
         existing = self.data[program_id]
         event_name = event.event_name
+        event_key = _event_key(event)
         new_streams = (
             _process_event(event) if operation != "DELETE" else {}
         )
@@ -469,7 +476,7 @@ class OpenADR3Coordinator(DataUpdateCoordinator[dict[str, ProgramData]]):
             old = existing.payloads.get(ptype)
             old_forecast = old.forecast if old is not None else []
             forecast = [
-                r for r in old_forecast if r.get("source_event") != event_name
+                r for r in old_forecast if r.get("event_key") != event_key
             ]
             if operation != "DELETE":
                 forecast.extend(new_streams.get(ptype, []))

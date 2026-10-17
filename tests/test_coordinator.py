@@ -385,5 +385,75 @@ class AsyncUpdateDataEmptyResultTests(unittest.TestCase):
         self.assertEqual(rows[0]["value"], 9.99)
 
 
+def _nameless_event(id_: str, start: str, value: float) -> Event:
+    """An event that omits the optional eventName (GH#16)."""
+    return Event.from_raw({
+        "id": id_,
+        "objectType": "EVENT",
+        "programID": "prog-1",
+        "intervals": [{
+            "id": 0,
+            "intervalPeriod": {"start": start, "duration": "PT1H"},
+            "payloads": [{"type": "PRICE", "values": [value]}],
+        }],
+    })
+
+
+class NamelessEventTests(unittest.TestCase):
+    """eventName is optional in OA3; events without it must still be used."""
+
+    def test_build_program_data_keeps_nameless_events(self):
+        events = [
+            _nameless_event("ev-b", "2026-05-28T14:00:00+00:00", 2.0),
+            _nameless_event("ev-a", "2026-05-28T13:00:00+00:00", 1.0),
+        ]
+        prog = _coord._build_program_data("prog-1", "P", ["PRICE"], events)
+        rows = prog.payloads["PRICE"].forecast
+        self.assertEqual([r["value"] for r in rows], [1.0, 2.0])
+        self.assertEqual(prog.event_names, [])
+
+    def _make_coordinator(self, data):
+        from unittest.mock import MagicMock
+
+        coord_class = _coord.OpenADR3Coordinator
+        coord = coord_class.__new__(coord_class)
+        coord.data = data
+        coord.hass = MagicMock()
+        coord.async_set_updated_data = MagicMock()
+        return coord
+
+    def test_mqtt_update_of_one_nameless_event_keeps_the_other(self):
+        ev_a = _nameless_event("ev-a", "2026-05-28T13:00:00+00:00", 1.0)
+        ev_b = _nameless_event("ev-b", "2026-05-28T14:00:00+00:00", 2.0)
+        coord = self._make_coordinator({
+            "prog-1": _coord._build_program_data(
+                "prog-1", "P", ["PRICE"], [ev_a, ev_b]
+            ),
+        })
+        ev_a_updated = _nameless_event("ev-a", "2026-05-28T13:00:00+00:00", 9.0)
+
+        coord._handle_mqtt_event(ev_a_updated, "UPDATE")
+
+        set_call = coord.hass.loop.call_soon_threadsafe.call_args_list[0]
+        new_data = set_call.args[1]
+        rows = new_data["prog-1"].payloads["PRICE"].forecast
+        self.assertEqual([r["value"] for r in rows], [9.0, 2.0])
+
+    def test_mqtt_delete_of_one_nameless_event_keeps_the_other(self):
+        ev_a = _nameless_event("ev-a", "2026-05-28T13:00:00+00:00", 1.0)
+        ev_b = _nameless_event("ev-b", "2026-05-28T14:00:00+00:00", 2.0)
+        coord = self._make_coordinator({
+            "prog-1": _coord._build_program_data(
+                "prog-1", "P", ["PRICE"], [ev_a, ev_b]
+            ),
+        })
+
+        coord._handle_mqtt_event(ev_a, "DELETE")
+
+        new_data = coord.hass.loop.call_soon_threadsafe.call_args_list[0].args[1]
+        rows = new_data["prog-1"].payloads["PRICE"].forecast
+        self.assertEqual([r["value"] for r in rows], [2.0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
