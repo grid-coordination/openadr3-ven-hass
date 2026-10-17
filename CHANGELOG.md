@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > [!IMPORTANT]
 > **Upgrading from 0.2.x or 0.3.x → 0.4.1:** the `async_migrate_entry` handles either starting point automatically (config-entry schema v1 → v2 covers both). Skip 0.4.0; it had a payload-type case bug that prevented sensor state from populating. Read the 0.4.0 entry below for the full list of behavioral changes you'll see (one sensor per payload type, native-granularity forecast, forecast-via-service rather than `entity.attributes.forecast`, etc.), and update Lovelace cards per [docs/dashboard.md](docs/dashboard.md) before restarting.
 
+## [0.4.9] — 2026-10-17
+
+> [!IMPORTANT]
+> **Price sensor units change.** Units now come from the VTN, so existing price sensors change from `$/kWh` to an ISO 4217 form such as `USD/kWh`, `AUD/kWh` or `EUR/kWh`. Home Assistant stops compiling long-term statistics for a sensor whose unit changes until you accept the change once per sensor in **Developer Tools → Statistics**. Dashboard cards that hardcode `$/kWh` (see [docs/dashboard.md](docs/dashboard.md)) need the same edit.
+
+### Fixed
+
+- Events without an `eventName` are no longer dropped. `eventName` is optional in OpenADR 3, but the coordinator filtered out every event lacking one, so sensors stayed `unknown` for VTNs that omit it. MQTT update and delete handling now matches an event's forecast rows by event `id` rather than by name, since names are neither required nor unique. Reported by [@haraldg](https://github.com/haraldg) ([#16](https://github.com/grid-coordination/openadr3-ven-hass/issues/16)).
+- Price units are no longer hardcoded to `$/kWh`. The unit is built from the `currency` and `units` of the VTN's event payload descriptors: program-level descriptors, overlaid field by field by any the events carry. Without a `currency`, the Home Assistant instance currency is used; without `units`, kWh. Any payload type whose descriptor carries a currency is treated as a price, so the AU VTN's `RRP` sensor now reports `AUD/kWh` instead of the literal unit `RRP` ([#16](https://github.com/grid-coordination/openadr3-ven-hass/issues/16)).
+
+### Changed
+
+- The coordinator fetches `/programs` once to read payload descriptors. If that fetch fails, the refresh fails and Home Assistant retries, rather than publishing values in a fallback unit.
+- The `PRICE` sensor icon is `mdi:cash` instead of `mdi:currency-usd`.
+
 ## [0.4.8] — 2026-06-24
 
 ### Changed
